@@ -5,16 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Warden</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛡️</text></svg>">
-<link rel="stylesheet" href="/static/style.css?v=0.1.2">
+<link rel="stylesheet" href="/static/style.css?v=0.2.0">
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">🛡️ <b>Warden</b> <span class="brand-tag">settings enforcer</span></div>
+  <div class="brand">
+    🛡️ <b>Warden</b> <span class="brand-tag">governance & privacy</span>
+  </div>
+  <nav class="nav-tabs">
+    <button id="tab-devices" class="nav-tab active" onclick="switchMainTab('devices')">📺 Devices</button>
+    <button id="tab-guard" class="nav-tab" onclick="switchMainTab('guard')">🚫 Channel Guard</button>
+    <button id="tab-inspector" class="nav-tab" onclick="switchMainTab('inspector')">🔍 Live Inspector</button>
+  </nav>
   <div id="summary" class="summary"></div>
 </header>
 
 <div class="layout">
-  <aside class="sidebar">
+  <aside class="sidebar" id="app-sidebar">
     <button id="btn-add" class="btn primary block">＋ Add device</button>
     <div id="device-list" class="device-list"></div>
   </aside>
@@ -24,6 +31,6 @@
 <div id="modal-root"></div>
 <div id="toasts" class="toasts"></div>
 
-<script src="/static/app.js?v=0.1.2"></script>
+<script src="/static/app.js?v=0.2.0"></script>
 </body>
 </html>

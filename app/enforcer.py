@@ -62,7 +62,7 @@ class Engine:
                 continue
             try:
                 self.run(device["id"])
-            except Exception:  # noqa: BLE001 - one bad device must not stop the sweep
+            except Exception:
                 log.exception("scheduled audit failed for device %s", device["id"])
 
     async def loop(self) -> None:

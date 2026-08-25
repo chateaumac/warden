@@ -15,9 +15,13 @@ from .config import STATIC_DIR, Settings
 from .db import Database
 from .discovery import DiscoveryService
 from .enforcer import Engine
+from .guard import GuardEngine
+from .integrations import HomeAssistantClient, Notifier
+from .integrations import metrics as metrics_module
 from .profiles import load_profiles
 from .routers import devices as devices_router
 from .routers import discovery as discovery_router
+from .routers import guard as guard_router
 from .routers import health as health_router
 from .routers import profiles as profiles_router
 
@@ -30,6 +34,19 @@ def create_app() -> FastAPI:
     settings = Settings.load()
     db = Database(settings.db_path)
     profiles = load_profiles(settings.profile_dirs)
+    notifier = Notifier(settings.notify_url)
+
+    ha_client = HomeAssistantClient(
+        host=settings.mqtt_host,
+        port=settings.mqtt_port,
+        user=settings.mqtt_user,
+        password=settings.mqtt_password,
+        db=db,
+    )
+
+    guard_engine = GuardEngine(db=db, settings=settings, notifier=notifier, ha_client=ha_client)
+    ha_client.guard_engine = guard_engine
+
     engine = Engine(db, profiles, settings)
     discovery = DiscoveryService(
         profiles_getter=lambda: profiles,
@@ -39,16 +56,28 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        log.info("Warden %s — %d profile(s), %d device(s), audit every %ds",
+        log.info("Warden %s — %d profile(s), %d device(s), audit every %ds, guard polling active",
                  settings.version, len(profiles), len(db.list_devices()),
                  settings.audit_interval_s)
+
+        # Start Home Assistant MQTT client if configured
+        ha_client.start()
+
         audit_task = asyncio.create_task(engine.loop(), name="warden-audit-loop")
+        guard_task = asyncio.create_task(guard_engine.loop(), name="warden-guard-loop")
+
         yield
+
         audit_task.cancel()
+        guard_task.cancel()
+        guard_engine.stop()
+        ha_client.stop()
+
         try:
-            await audit_task
-        except asyncio.CancelledError:
+            await asyncio.gather(audit_task, guard_task, return_exceptions=True)
+        except Exception:
             pass
+
         db.close()
 
     app = FastAPI(title="Warden", version=settings.version, lifespan=lifespan)
@@ -56,9 +85,12 @@ def create_app() -> FastAPI:
     app.state.db = db
     app.state.profiles = profiles
     app.state.engine = engine
+    app.state.guard_engine = guard_engine
     app.state.discovery = discovery
+    app.state.ha_client = ha_client
+    app.state.notifier = notifier
 
-    for module in (health_router, devices_router, profiles_router, discovery_router):
+    for module in (health_router, devices_router, profiles_router, discovery_router, guard_router, metrics_module):
         app.include_router(module.router)
 
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

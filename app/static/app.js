@@ -1,4 +1,4 @@
-/* Warden UI — vanilla JS single page app. */
+/* Warden UI — unified settings enforcer and real-time content guard. */
 "use strict";
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -29,13 +29,18 @@ const ACTION_STATE = {
 };
 
 const state = {
+  mainTab: "devices",    // devices | guard | inspector
   devices: [],
   profiles: [],
+  channelRules: [],
   selectedId: null,
   view: "home",          // home | add | device
   events: [],
   discovery: null,
   discoveryPoll: null,
+  guardState: {},
+  inspectResult: null,
+  inspectingId: null,
 };
 
 /* ------------------------------------------------------------------ api */
@@ -85,9 +90,7 @@ function timeAgo(iso) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-/* Minimal markdown for profile how-tos (escape first, then format). */
 function mdLite(text) {
-  // hard-wrapped continuation lines belong to the block above them
   const lines = [];
   for (const raw of (text || "").split("\n")) {
     const trimmed = raw.trim();
@@ -98,75 +101,79 @@ function mdLite(text) {
       lines.push(raw);
     }
   }
-  let html = "", list = null, quote = [];
-  const closeList = () => { if (list) { html += `</${list}>`; list = null; } };
-  const flushQuote = () => {
-    if (quote.length) { html += `<blockquote>${quote.join("<br>")}</blockquote>`; quote = []; }
-  };
-  for (let line of lines) {
-    line = esc(line)
-      .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
-      .replace(/\*(.+?)\*/g, "<i>$1</i>")
-      .replace(/`(.+?)`/g, "<code>$1</code>");
-    if (/^&gt;\s?/.test(line)) { closeList(); quote.push(line.replace(/^&gt;\s?/, "")); continue; }
-    flushQuote();
-    const heading = line.match(/^(#{2,})\s+(.*)$/);
-    if (heading) { closeList(); const lvl = Math.min(heading[1].length, 4); html += `<h${lvl}>${heading[2]}</h${lvl}>`; }
-    else if (/^\d+\.\s+/.test(line)) {
-      if (list !== "ol") { closeList(); html += "<ol>"; list = "ol"; }
-      html += `<li>${line.replace(/^\d+\.\s+/, "")}</li>`;
-    } else if (/^[-*]\s+/.test(line)) {
-      if (list !== "ul") { closeList(); html += "<ul>"; list = "ul"; }
-      html += `<li>${line.replace(/^[-*]\s+/, "")}</li>`;
-    } else if (line.trim() === "") { closeList(); }
-    else { closeList(); html += `<p>${line}</p>`; }
+  return lines.map((l) => {
+    const t = l.trim();
+    if (t.startsWith("## ")) return `<h4>${esc(t.slice(3))}</h4>`;
+    if (t.startsWith("> "))  return `<blockquote>${esc(t.slice(2))}</blockquote>`;
+    if (/^\d+\.\s/.test(t)) return `<li>${esc(t.replace(/^\d+\.\s/, ""))}</li>`;
+    if (t.startsWith("- ") || t.startsWith("* ")) return `<li>${esc(t.slice(2))}</li>`;
+    if (!t) return "";
+    return `<p>${esc(t)}</p>`;
+  }).join("")
+    .replace(/(<li>.*<\/li>)+/g, "<ol>$&</ol>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\*([^*]+)\*/g, "<i>$1</i>");
+}
+
+/* ------------------------------------------------------------- lifecycle */
+
+async function init() {
+  $("#btn-add").addEventListener("click", () => showAdd());
+  await loadProfiles();
+  await loadChannelRules();
+  await refresh();
+  setInterval(refresh, 5000);
+}
+
+function switchMainTab(tab) {
+  state.mainTab = tab;
+  $$(".nav-tab").forEach(el => el.classList.remove("active"));
+  const tabEl = $(`#tab-${tab}`);
+  if (tabEl) tabEl.classList.add("active");
+  
+  const sidebar = $("#app-sidebar");
+  if (tab === "devices") {
+    sidebar.style.display = "block";
+  } else {
+    sidebar.style.display = "none";
   }
-  closeList();
-  flushQuote();
-  return `<div class="howto">${html}</div>`;
+  
+  renderMain();
 }
 
-const profileById = (id) => state.profiles.find((p) => p.id === id) || null;
-const deviceById = (id) => state.devices.find((d) => d.id === id) || null;
-
-function actionEnabled(device, action) {
-  const o = device.action_overrides || {};
-  return o[action.id] !== undefined ? o[action.id] : (action.default !== false);
+async function loadProfiles() {
+  try { state.profiles = await api("/api/profiles"); }
+  catch (e) { toast("failed to load profiles: " + e.message, "down"); }
 }
 
-function lastResultFor(device, actionId) {
-  return (device.last_result || []).find((r) => r.action_id === actionId) || null;
+async function loadChannelRules() {
+  try { state.channelRules = await api("/api/guard/rules"); }
+  catch (e) { console.warn("failed to load rules", e); }
 }
 
-/* -------------------------------------------------------------- refresh */
-
-async function refresh(initial = false) {
+async function refresh() {
   try {
     state.devices = await api("/api/devices");
+    if (state.selectedId && !deviceById(state.selectedId)) {
+      state.selectedId = null;
+      state.view = "home";
+    }
+    if (state.selectedId && state.mainTab === "devices" && state.view === "device") {
+      try {
+        state.guardState[state.selectedId] = await api(`/api/guard/devices/${state.selectedId}/state`);
+      } catch {}
+    }
   } catch (e) {
-    if (initial) toast(`Failed to load devices: ${e.message}`, "error");
-    return;
+    console.warn("refresh failed", e);
   }
   renderSummary();
   renderSidebar();
-  if (state.view === "device") {
-    const dev = deviceById(state.selectedId);
-    if (!dev) { state.view = "home"; renderMain(); return; }
-    // don't clobber the form while the user is typing in it
-    const active = document.activeElement;
-    if (!active || !$("#main").contains(active) ||
-        !["INPUT", "SELECT", "TEXTAREA"].includes(active.tagName)) {
-      await loadEvents();
-      renderMain();
-    }
-  }
+  renderMain();
 }
 
-async function loadEvents() {
-  if (state.selectedId == null) return;
-  try { state.events = await api(`/api/devices/${state.selectedId}/events?limit=60`); }
-  catch { state.events = []; }
-}
+const deviceById = (id) => state.devices.find((d) => d.id === id);
+const profileById = (id) => state.profiles.find((p) => p.id === id);
 
 /* --------------------------------------------------------------- render */
 
@@ -211,6 +218,16 @@ function renderSidebar() {
 
 function renderMain() {
   const main = $("#main");
+  if (state.mainTab === "guard") {
+    renderGuardView(main);
+    return;
+  }
+  if (state.mainTab === "inspector") {
+    renderInspectorView(main);
+    return;
+  }
+
+  // Devices tab
   if (state.view === "add") { renderAdd(main); return; }
   if (state.view === "device") {
     const dev = deviceById(state.selectedId);
@@ -222,438 +239,618 @@ function renderMain() {
 function renderHome(main) {
   main.innerHTML = `
     <div class="card">
-      <h3>Welcome to Warden 🛡️</h3>
+      <h3>Warden Governance &amp; Content Shield 🛡️</h3>
       <p class="hint">
-        Warden keeps your devices' settings the way <i>you</i> set them. It connects to
-        Android TVs (and anything else with ADB or SSH), audits ad &amp; telemetry
-        settings against a profile, and re-applies them when a firmware update
-        quietly flips them back.
+        Warden protects your TVs on two distinct layers:
       </p>
-      <ol class="hint">
-        <li><b>＋ Add device</b> — scan the LAN (mDNS + optional subnet sweep) or add by IP.</li>
-        <li><b>Connect</b> — pair with the device; the UI walks you through enabling ADB.</li>
-        <li><b>Audit</b> — see which settings have drifted from the profile.</li>
-        <li>Flip the device to <b>Enforce</b> mode and Warden re-sanitizes it automatically.</li>
-      </ol>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin: 14px 0;">
+        <div style="background:var(--bg2); padding:14px; border-radius:8px; border:1px solid var(--border);">
+          <b>1. Device Sanitization &amp; Anti-ACR</b>
+          <p class="hint" style="margin-top:6px;">
+            Disables ACR (Samba TV), eliminates Google/Sony recommendation trackers, disables launcher ads, and forces OS-level Private DNS (DoT) via AdGuard/NextDNS.
+          </p>
+        </div>
+        <div style="background:var(--bg2); padding:14px; border-radius:8px; border:1px solid var(--border);">
+          <b>2. Real-Time Channel Guard</b>
+          <p class="hint" style="margin-top:6px;">
+            Zero-wear active media monitoring that detects restricted live streams (YouTube TV) and automatically skips past them or force-stops playback.
+          </p>
+        </div>
+      </div>
     </div>
     <div class="card">
-      <h3>Profiles</h3>
+      <h3>Active Profiles</h3>
       <div class="hint">${state.profiles.map((p) =>
         `<div style="margin-bottom:8px"><b>${esc(p.name)}</b> <span class="chip">${esc(p.connector)}</span><br>${esc(p.description)}</div>`).join("")}
       </div>
     </div>`;
 }
 
-/* ------------------------------------------------------------ add view */
-
-function showAdd() {
-  state.view = "add";
-  renderSidebar();
-  renderMain();
-  refreshDiscovery();
-}
-
-function renderAdd(main) {
-  const disc = state.discovery;
-  const adbProfiles = state.profiles.filter((p) => p.connector === "adb");
-  const profileOptions = (selected) => state.profiles.map((p) =>
-    `<option value="${esc(p.id)}" ${p.id === selected ? "selected" : ""}>${esc(p.name)}</option>`).join("");
-
-  let resultsHtml = "";
-  if (disc) {
-    if (disc.error) resultsHtml = `<p class="hint" style="color:var(--down)">Scan failed: ${esc(disc.error)}</p>`;
-    else if (!disc.results.length) {
-      resultsHtml = disc.scanning
-        ? `<p class="hint"><span class="spinner"></span> Scanning the network…</p>`
-        : (disc.finished_at ? `<p class="hint">Nothing found. Devices on other VLANs won't answer mDNS — try a subnet sweep.</p>` : "");
-    } else {
-      resultsHtml = `
-        <table class="disc">
-          <tr><th></th><th>Device</th><th>Address</th><th>Seen via</th><th>Profile</th><th></th></tr>
-          ${disc.results.map((r, i) => `
-            <tr>
-              <td><span class="dot ${r.port_open ? "ok" : "idle"}" title="${r.port_open ? "ADB port 5555 open" : "ADB port closed — enable debugging first"}"></span></td>
-              <td><b>${esc(r.name || "(unnamed)")}</b><br><span class="muted">${esc(r.model || "")}</span></td>
-              <td class="mono">${esc(r.host)}</td>
-              <td>${r.mdns_types.map((t) => `<span class="chip">${esc(t.replace("._tcp.local.", "").replace(/^_/, ""))}</span>`).join(" ")}
-                  ${!r.mdns_types.length ? '<span class="chip">port sweep</span>' : ""}</td>
-              <td><select data-disc-profile="${i}">${profileOptions(r.suggested_profile)}</select></td>
-              <td>${r.already_added
-                  ? `<span class="muted">added ✓</span>`
-                  : `<button class="btn small primary" data-disc-add="${i}">Add</button>`}</td>
-            </tr>`).join("")}
-        </table>`;
-    }
-  }
-
-  main.innerHTML = `
-    <div class="card">
-      <h3>Discover devices</h3>
-      <div class="scan-bar">
-        <button class="btn primary" id="btn-scan" ${disc?.scanning ? "disabled" : ""}>
-          ${disc?.scanning ? '<span class="spinner"></span> Scanning…' : "🔍 Scan (mDNS)"}
-        </button>
-        <span class="muted">or sweep a subnet for open ADB ports:</span>
-        <input type="text" id="scan-subnet" placeholder="10.10.20.0/24"
-               value="${esc(disc?.default_subnet || "")}">
-        <button class="btn" id="btn-sweep" ${disc?.scanning ? "disabled" : ""}>Sweep</button>
-      </div>
-      <p class="hint" style="margin-bottom:0">
-        mDNS finds Chromecasts / Android TVs that announce themselves on this L2 segment.
-        The sweep probes every host in a subnet for TCP 5555 — use it across VLANs.
-      </p>
-    </div>
-    <div class="card" id="disc-results"><h3>Results</h3>${resultsHtml || '<p class="hint">Run a scan to find devices.</p>'}</div>
-    <div class="card">
-      <h3>Add manually</h3>
-      <div class="form-grid">
-        <label class="fld"><b>Host / IP</b><input type="text" id="add-host" placeholder="10.10.20.31"></label>
-        <label class="fld"><b>Name</b><input type="text" id="add-name" placeholder="Living room TV"></label>
-        <label class="fld"><b>Connector</b>
-          <select id="add-connector">
-            <option value="adb">ADB (Android TV)</option>
-            <option value="ssh">SSH</option>
-          </select>
-        </label>
-        <label class="fld"><b>Port</b><input type="number" id="add-port" placeholder="(profile default)"></label>
-        <label class="fld full"><b>Profile</b><select id="add-profile">${profileOptions(adbProfiles[0]?.id)}</select></label>
-        <label class="fld full" id="add-config-wrap" style="display:none"><b>Connector config (JSON)</b>
-          <textarea id="add-config" placeholder='{"username": "root", "password": "..."}'></textarea>
-        </label>
-      </div>
-      <button class="btn primary" id="btn-add-manual">Add device</button>
-    </div>`;
-
-  $("#btn-scan").addEventListener("click", () => startScan({ mdns: true }));
-  $("#btn-sweep").addEventListener("click", () => {
-    const subnet = $("#scan-subnet").value.trim();
-    if (!subnet) { toast("Enter a subnet in CIDR form first", "warn"); return; }
-    startScan({ mdns: false, subnet });
-  });
-  $("#add-connector").addEventListener("change", (e) => {
-    $("#add-config-wrap").style.display = e.target.value === "ssh" ? "" : "none";
-  });
-  $("#btn-add-manual").addEventListener("click", addManual);
-  $$("[data-disc-add]").forEach((btn) => btn.addEventListener("click", () => {
-    const i = Number(btn.dataset.discAdd);
-    const row = state.discovery.results[i];
-    const profileId = $(`[data-disc-profile="${i}"]`).value;
-    addDiscovered(row, profileId);
-  }));
-}
-
-async function startScan(opts) {
-  try {
-    state.discovery = await api("/api/discovery/scan", { method: "POST", body: opts });
-  } catch (e) { toast(`Scan failed: ${e.message}`, "error"); return; }
-  renderMain();
-  pollDiscovery();
-}
-
-function pollDiscovery() {
-  clearInterval(state.discoveryPoll);
-  state.discoveryPoll = setInterval(async () => {
-    await refreshDiscovery();
-    if (!state.discovery?.scanning) clearInterval(state.discoveryPoll);
-  }, 1500);
-}
-
-async function refreshDiscovery() {
-  try { state.discovery = await api("/api/discovery"); } catch { return; }
-  if (state.view === "add") renderMain();
-}
-
-async function addDiscovered(row, profileId) {
-  try {
-    const device = await api("/api/devices", { method: "POST", body: {
-      host: row.host, name: row.name || row.host,
-      profile_id: profileId || null,
-    }});
-    toast(`Added ${device.name}`);
-    await refresh();
-    selectDevice(device.id);
-  } catch (e) { toast(e.message, "error"); }
-}
-
-async function addManual() {
-  const host = $("#add-host").value.trim();
-  if (!host) { toast("Host is required", "warn"); return; }
-  const body = {
-    host,
-    name: $("#add-name").value.trim() || null,
-    connector: $("#add-connector").value,
-    profile_id: $("#add-profile").value || null,
-  };
-  const port = $("#add-port").value.trim();
-  if (port) body.port = Number(port);
-  const configRaw = $("#add-config").value.trim();
-  if (configRaw && body.connector === "ssh") {
-    try { body.config = JSON.parse(configRaw); }
-    catch { toast("Connector config is not valid JSON", "error"); return; }
-  }
-  try {
-    const device = await api("/api/devices", { method: "POST", body });
-    toast(`Added ${device.name}`);
-    await refresh();
-    selectDevice(device.id);
-  } catch (e) { toast(e.message, "error"); }
-}
-
-/* --------------------------------------------------------- device view */
+/* ------------------------------------------------------------ device view */
 
 async function selectDevice(id) {
   state.selectedId = id;
   state.view = "device";
-  await loadEvents();
-  renderSidebar();
+  state.mainTab = "devices";
+  switchMainTab("devices");
+  try {
+    state.events = await api(`/api/devices/${id}/events?limit=40`);
+    state.guardState[id] = await api(`/api/guard/devices/${id}/state`);
+  } catch {}
   renderMain();
 }
 
-function renderDevice(main, d) {
-  const profile = profileById(d.profile_id);
-  const meta = STATUS[d.status] || STATUS.unknown;
-  const ident = [d.identity?.manufacturer, d.identity?.model, d.identity?.os]
-    .filter(Boolean).join(" · ");
-  const needsSetup = ["unknown", "unauthorized", "unreachable"].includes(d.status);
+function renderDevice(main, dev) {
+  const profile = profileById(dev.profile_id);
+  const statusMeta = STATUS[dev.status] || STATUS.unknown;
+  const gState = state.guardState[dev.id] || { state: "offline", is_snoozed: false, title: "", current_package: "" };
 
-  const profileOptions = state.profiles.map((p) =>
-    `<option value="${esc(p.id)}" ${p.id === d.profile_id ? "selected" : ""}>${esc(p.name)}</option>`).join("");
-
-  const varsHtml = (profile?.vars || []).map((v) => `
-    <label class="fld"><b>${esc(v.label || v.name)}</b>
-      <input type="text" data-var="${esc(v.name)}" value="${esc((d.vars || {})[v.name] || "")}"
-             placeholder="${esc(v.name)}">
-      <span>${esc(v.description || "")}</span>
-    </label>`).join("");
-
-  const actionsHtml = (profile?.actions || []).map((a) => {
-    const r = lastResultFor(d, a.id);
-    const stateKey = r ? r.status : "pending";
-    const target = a.type === "package_disable" ? a.package
-      : a.type === "setting" ? `${a.namespace}/${a.key} = ${a.value}` : "shell";
-    return `
-      <div class="action-row">
-        <input type="checkbox" data-action="${esc(a.id)}" ${actionEnabled(d, a) ? "checked" : ""}>
-        <div>
-          <div class="ar-name">${esc(a.name || a.id)}</div>
-          <div class="ar-desc">${esc(a.description || "")}</div>
-          <div class="ar-meta">${esc(target)}</div>
-        </div>
-        <div class="ar-state">
-          <span class="state-tag ${esc(stateKey)}">${esc(ACTION_STATE[stateKey] || stateKey)}</span>
-          ${r && (r.detail || r.observed) ? `<div class="ar-detail">${esc(r.detail || `observed: ${r.observed}`)}</div>` : ""}
-        </div>
-      </div>`;
-  }).join("");
-
-  const eventsHtml = state.events.map((e) => `
-    <div class="event-row ${esc(e.level)}">
-      <span class="ev-ts" title="${esc(e.ts)}">${esc(timeAgo(e.ts))}</span>
-      <span>${esc(e.message)}</span>
-    </div>`).join("") || `<p class="hint">No events yet.</p>`;
+  const badgeCls = `badge-${gState.state || 'offline'}`;
 
   main.innerHTML = `
-    <div class="detail-head">
+    <div class="device-header">
       <div>
-        <h2>${esc(d.name)}</h2>
-        ${d.location ? `<div class="sub">📍 ${esc(d.location)}</div>` : ""}
-        <div class="sub">${esc(d.host)}:${d.port} · ${esc(d.connector)}${ident ? " · " + esc(ident) : ""}</div>
-        <div style="margin-top:8px" class="row-gap">
-          <span class="pill ${meta.cls}"><span class="dot ${meta.cls}"></span>${esc(meta.label)}</span>
-          ${d.status_detail ? `<span class="muted" style="font-size:12px">${esc(d.status_detail)}</span>` : ""}
-          <span class="muted" style="font-size:12px">audited ${esc(timeAgo(d.last_audit))}</span>
+        <h2>${esc(dev.name)}</h2>
+        <div class="hint">${esc(dev.host)}:${dev.port} · ${esc(dev.location || "No location")}</div>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button class="btn secondary" onclick="openLiveInspectorFor(${dev.id})">🔍 Live Inspect</button>
+        <button class="btn ${dev.mode === 'enforce' ? 'primary' : 'secondary'}" onclick="toggleDeviceMode(${dev.id})">
+          Mode: ${esc(dev.mode.toUpperCase())}
+        </button>
+        <button class="btn secondary" onclick="triggerAudit(${dev.id})">⚡ Audit Now</button>
+        <button class="btn danger" onclick="deleteDeviceConfirm(${dev.id})">Delete</button>
+      </div>
+    </div>
+
+    <!-- Live Channel Guard Card -->
+    <div class="card" style="border-left: 4px solid var(--accent);">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <span class="guard-badge ${badgeCls}">${esc(gState.state)}</span>
+          <span style="font-weight:600; margin-left:8px;">Channel Guard</span>
+        </div>
+        <div>
+          ${gState.is_snoozed 
+            ? `<button class="btn secondary sm" onclick="unsnoozeDevice(${dev.id})">⏰ Snoozed (${gState.snooze_remaining_s}s) - Resume</button>`
+            : `<button class="btn secondary sm" onclick="snoozeDevicePrompt(${dev.id})">⏰ Snooze 30m</button>`}
         </div>
       </div>
-      <div class="head-actions">
-        <button class="btn" id="btn-edit">✎ Edit</button>
-        <button class="btn" id="btn-connect">🔌 Connect</button>
-        <button class="btn" id="btn-audit">🔎 Audit now</button>
-        <button class="btn warn" id="btn-enforce">⚡ Enforce now</button>
-        <button class="btn danger" id="btn-delete">✕</button>
+      <div style="margin-top:12px; font-size:13px;">
+        <div><b>Active App:</b> <code>${esc(gState.current_package || "None")}</code></div>
+        <div><b>Current Playing:</b> ${esc(gState.title || "No active stream")} ${gState.subtitle ? `· <i>${esc(gState.subtitle)}</i>` : ""}</div>
+        <div class="hint" style="margin-top:4px;">${esc(gState.status_detail || "")}</div>
+        ${gState.last_action_name ? `<div style="margin-top:4px; color:var(--warn);">⚠️ Last Action: Enforced <b>${esc(gState.last_action_name)}</b> (${esc(gState.last_matched_rule)})</div>` : ""}
       </div>
     </div>
 
+    <!-- Sanitization / Profile Card -->
     <div class="card">
-      <div class="row-gap">
-        <span class="muted">Mode</span>
-        <span class="seg">
-          <button id="mode-monitor" class="${d.mode === "monitor" ? "active" : ""}">Monitor</button>
-          <button id="mode-enforce" class="${d.mode === "enforce" ? "active warn-seg" : ""}">Enforce</button>
-        </span>
-        <span class="muted" style="font-size:12px">
-          ${d.mode === "enforce"
-            ? "Drift is re-applied automatically on every scheduled audit."
-            : "Drift is only reported — flip to Enforce to auto-fix."}
-        </span>
-        <span style="margin-left:auto" class="row-gap">
-          <span class="muted">Profile</span>
-          <select id="sel-profile" style="width:auto">${profileOptions}</select>
-          <button class="btn small ${d.enabled ? "" : "primary"}" id="btn-pause">${d.enabled ? "⏸ Pause" : "▶ Resume"}</button>
-        </span>
+      <h3>Sanitization &amp; Tracker Policy (${esc(profile ? profile.name : "No Profile")})</h3>
+      <p class="hint">${esc(profile ? profile.description : "Assign a profile to enforce anti-tracking & ad blocking")}</p>
+      
+      <div style="margin-top:14px;">
+        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+          <thead>
+            <tr style="text-align:left; border-bottom:1px solid var(--border); color:var(--muted);">
+              <th style="padding:6px 0;">Action / Tracker</th>
+              <th style="padding:6px 0;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(dev.last_result || []).map(r => `
+              <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:8px 0;"><b>${esc(r.name)}</b><br><span class="hint">${esc(r.detail || r.observed || "")}</span></td>
+                <td style="padding:8px 0;"><span class="chip">${esc(ACTION_STATE[r.status] || r.status)}</span></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
       </div>
     </div>
 
-    ${needsSetup && profile ? `
-    <div class="card" style="border-color:var(--auth)">
-      <details class="howto-box" ${d.status !== "compliant" ? "open" : ""}>
-        <summary>📖 Setup: enable debugging on this device</summary>
-        ${mdLite(profile.howto)}
-        <p class="hint">Then hit <b>Connect</b> above and accept the dialog on the device's screen.</p>
-      </details>
-    </div>` : ""}
-
-    ${varsHtml ? `
+    <!-- Event History -->
     <div class="card">
-      <h3>Device variables</h3>
-      ${varsHtml}
-      <button class="btn small" id="btn-save-vars">Save variables</button>
-    </div>` : ""}
-
-    <div class="card">
-      <h3>Actions ${profile ? `<span class="chip">${esc(profile.name)}</span>` : ""}</h3>
-      ${actionsHtml || '<p class="hint">Assign a profile to manage actions on this device.</p>'}
+      <h3>Recent Events</h3>
+      <div style="max-height:220px; overflow-y:auto; font-size:12.5px;">
+        ${state.events.map(e => `
+          <div style="padding:6px 0; border-bottom:1px solid var(--border); display:flex; gap:8px;">
+            <span class="hint">${esc(timeAgo(e.ts))}</span>
+            <span class="chip">${esc(e.kind)}</span>
+            <span>${esc(e.message)}</span>
+          </div>
+        `).join("")}
+      </div>
     </div>
-
-    <div class="card">
-      <h3>Event log</h3>
-      ${eventsHtml}
-    </div>`;
-
-  $("#btn-edit").addEventListener("click", () => editDevice(d));
-  $("#btn-connect").addEventListener("click", () => connectDevice(d));
-  $("#btn-audit").addEventListener("click", () => runOp(d.id, "audit", "Audit"));
-  $("#btn-enforce").addEventListener("click", () => runOp(d.id, "enforce", "Enforce"));
-  $("#btn-delete").addEventListener("click", () => deleteDevice(d));
-  $("#mode-monitor").addEventListener("click", () => patchDevice(d.id, { mode: "monitor" }));
-  $("#mode-enforce").addEventListener("click", () => patchDevice(d.id, { mode: "enforce" },
-    "Enforce mode on — drift will be re-applied automatically"));
-  $("#btn-pause").addEventListener("click", () => patchDevice(d.id, { enabled: !d.enabled }));
-  $("#sel-profile").addEventListener("change", (e) => patchDevice(d.id, { profile_id: e.target.value }));
-  const saveVarsBtn = $("#btn-save-vars");
-  if (saveVarsBtn) saveVarsBtn.addEventListener("click", () => {
-    const vars = { ...(d.vars || {}) };
-    $$("[data-var]", main).forEach((input) => { vars[input.dataset.var] = input.value.trim(); });
-    patchDevice(d.id, { vars }, "Variables saved");
-  });
-  $$("[data-action]", main).forEach((cb) => cb.addEventListener("change", () => {
-    const overrides = { ...(d.action_overrides || {}), [cb.dataset.action]: cb.checked };
-    patchDevice(d.id, { action_overrides: overrides });
-  }));
+  `;
 }
 
-function editDevice(d) {
+/* -------------------------------------------------------- channel guard view */
+
+function renderGuardView(main) {
+  main.innerHTML = `
+    <div class="device-header">
+      <div>
+        <h2>Channel Guard &amp; Content Rules</h2>
+        <div class="hint">Define restricted channels and programs with automatic skip or force-stop actions</div>
+      </div>
+      <div>
+        <button class="btn primary" onclick="openAddRuleModal()">＋ Add Channel Rule</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <table style="width:100%; border-collapse:collapse; font-size:13.5px;">
+        <thead>
+          <tr style="text-align:left; border-bottom:1px solid var(--border); color:var(--muted);">
+            <th style="padding:8px 4px;">Status</th>
+            <th style="padding:8px 4px;">Rule Name</th>
+            <th style="padding:8px 4px;">Target Apps</th>
+            <th style="padding:8px 4px;">Patterns</th>
+            <th style="padding:8px 4px;">Action</th>
+            <th style="padding:8px 4px; text-align:right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${state.channelRules.map(r => `
+            <tr style="border-bottom:1px solid var(--border);">
+              <td style="padding:10px 4px;">
+                <input type="checkbox" ${r.enabled ? "checked" : ""} onchange="toggleRuleEnabled(${r.id}, this.checked)">
+              </td>
+              <td style="padding:10px 4px;">
+                <b>${esc(r.name)}</b>
+                <div class="hint">${esc(r.description || "")}</div>
+              </td>
+              <td style="padding:10px 4px;">
+                ${(r.target_packages || []).map(p => `<code>${esc(p.split('.').pop())}</code>`).join(", ")}
+              </td>
+              <td style="padding:10px 4px;">
+                ${(r.patterns || []).map(p => `<span class="rule-pill">${esc(p)}</span>`).join("")}
+              </td>
+              <td style="padding:10px 4px;">
+                <span class="chip">${esc(r.action)}</span>
+              </td>
+              <td style="padding:10px 4px; text-align:right;">
+                <button class="btn secondary sm" onclick="openEditRuleModal(${r.id})">Edit</button>
+                <button class="btn danger sm" onclick="deleteRuleConfirm(${r.id})">Delete</button>
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Regex Tester Tool -->
+    <div class="card">
+      <h3>Pattern Tester</h3>
+      <p class="hint">Test regular expressions against real channel metadata or UI dumps</p>
+      <div style="display:flex; gap:10px; margin-top:10px;">
+        <input type="text" id="test-pattern" placeholder="e.g. fox\\s*news|\\bFNC\\b" class="input" style="flex:1;">
+        <input type="text" id="test-sample" placeholder="e.g. Live: Fox News Channel HD" class="input" style="flex:2;">
+        <button class="btn secondary" onclick="runPatternTest()">Test Pattern</button>
+      </div>
+      <div id="test-result" style="margin-top:8px; font-family:var(--mono); font-size:12px;"></div>
+    </div>
+  `;
+}
+
+function openAddRuleModal() {
   openModal(`
-    <h3>Edit device</h3>
-    <label class="fld"><b>Name</b>
-      <input type="text" id="edit-name" value="${esc(d.name)}" placeholder="e.g. Regan's Office TV"></label>
-    <label class="fld"><b>Location</b>
-      <input type="text" id="edit-location" value="${esc(d.location || "")}" placeholder="e.g. Regan's Office">
-      <span>Where the device physically lives — shown in the sidebar.</span>
-    </label>
-    <div class="row-gap" style="margin-top:12px">
-      <button class="btn primary" id="edit-save">Save</button>
-      <button class="btn ghost" id="edit-cancel">Cancel</button>
-    </div>`);
-  $("#edit-cancel").addEventListener("click", closeModal);
-  $("#edit-name").focus();
-  $("#edit-save").addEventListener("click", async () => {
-    const name = $("#edit-name").value.trim();
-    const location = $("#edit-location").value.trim();
-    if (!name) { toast("Name can't be empty", "warn"); return; }
-    closeModal();
-    await patchDevice(d.id, { name, location }, "Device updated");
-  });
-}
+    <h3>Add Channel Rule</h3>
+    <form id="rule-form" onsubmit="handleRuleSubmit(event)">
+      <label class="label">Rule Name</label>
+      <input class="input block" name="name" placeholder="e.g. Skip Fox News" required>
+      
+      <label class="label" style="margin-top:10px;">Target Package(s)</label>
+      <input class="input block" name="target_packages" value="com.google.android.youtube.tvunplugged" required>
+      <div class="hint">Comma separated (e.g. com.google.android.youtube.tvunplugged for YouTube TV)</div>
 
-async function patchDevice(id, fields, msg) {
-  try {
-    const updated = await api(`/api/devices/${id}`, { method: "PATCH", body: fields });
-    const i = state.devices.findIndex((x) => x.id === id);
-    if (i >= 0) state.devices[i] = updated;
-    if (msg) toast(msg);
-    renderSummary(); renderSidebar(); renderMain();
-  } catch (e) { toast(e.message, "error"); }
-}
+      <label class="label" style="margin-top:10px;">Regex Patterns (one per line)</label>
+      <textarea class="input block" name="patterns" rows="3" placeholder="fox\\s*news\n\\bFNC\\b" required></textarea>
 
-async function runOp(id, op, label) {
-  const btn = $(`#btn-${op}`);
-  if (btn) { btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> ${label}…`; }
-  try {
-    const result = await api(`/api/devices/${id}/${op}`, { method: "POST", body: {} });
-    if (result.error) toast(`${label}: ${result.error}`, "warn");
-    else {
-      const fixedNote = result.fixed ? ` — re-applied ${result.fixed} setting(s)` : "";
-      toast(`${label} finished: ${result.status_detail || result.status}${fixedNote}`,
-            result.status === "compliant" ? "ok" : "warn");
-    }
-  } catch (e) { toast(`${label} failed: ${e.message}`, "error"); }
-  await refresh();
-  await loadEvents();
-  renderMain();
-}
+      <label class="label" style="margin-top:10px;">Action</label>
+      <select class="input block" name="action">
+        <option value="auto_skip" selected>auto_skip (Advance channel / D-pad)</option>
+        <option value="force_stop">force_stop (Kill streaming app)</option>
+        <option value="back">back (Send BACK key twice)</option>
+        <option value="home">home (Return to Google TV launcher)</option>
+        <option value="mute">mute (Mute volume)</option>
+      </select>
 
-async function connectDevice(d) {
-  const profile = profileById(d.profile_id);
-  const overlay = openModal(`
-    <h3>🔌 Connecting to ${esc(d.name)}</h3>
-    <p><span class="spinner"></span> Reaching ${esc(d.host)}:${d.port}…</p>
-    <p class="hint"><b>Now watch the device's screen.</b> When the
-      <i>"Allow USB debugging?"</i> dialog appears, tick
-      <b>Always allow from this computer</b> and accept. Warden waits up to 30&nbsp;seconds.</p>
+      <label class="label" style="margin-top:10px;">Description</label>
+      <input class="input block" name="description" placeholder="Optional description">
+
+      <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:8px;">
+        <button type="button" class="btn secondary" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn primary">Save Rule</button>
+      </div>
+    </form>
   `);
-  let result;
-  try {
-    result = await api(`/api/devices/${d.id}/connect`, { method: "POST", body: { timeout_s: 30 } });
-  } catch (e) {
-    result = { ok: false, status: "error", error: e.message };
-  }
-  if (!$("#modal-root").contains(overlay)) { await refresh(); return; } // user closed it
-  const modal = $(".modal", overlay);
-  if (result.ok) {
-    const ident = [result.identity?.manufacturer, result.identity?.model, result.identity?.os]
-      .filter(Boolean).join(" · ");
-    modal.innerHTML = `
-      <h3>✅ Connected</h3>
-      <p>${esc(d.name)} authorized Warden${ident ? ` — <b>${esc(ident)}</b>` : ""}.</p>
-      ${result.audit ? `<p class="hint">First audit: <b>${esc(result.audit.status_detail || result.audit.status)}</b></p>` : ""}
-      <button class="btn primary" onclick="document.getElementById('modal-root').innerHTML=''">Done</button>`;
-  } else {
-    const showHowto = result.status === "unreachable" && profile;
-    modal.innerHTML = `
-      <h3>${result.status === "unauthorized" ? "🔒 Not authorized yet" : "⚠️ Connection failed"}</h3>
-      <p class="hint">${esc(result.error || "")}</p>
-      ${showHowto ? mdLite(profile.howto) : ""}
-      <div class="row-gap" style="margin-top:10px">
-        <button class="btn primary" id="modal-retry">Try again</button>
-        <button class="btn ghost" onclick="document.getElementById('modal-root').innerHTML=''">Close</button>
-      </div>`;
-    const retry = $("#modal-retry", modal);
-    if (retry) retry.addEventListener("click", () => connectDevice(d));
-  }
-  await refresh();
 }
 
-async function deleteDevice(d) {
-  if (!confirm(`Remove ${d.name} (${d.host}) from Warden?\nNothing is changed on the device itself.`)) return;
+function openEditRuleModal(ruleId) {
+  const r = state.channelRules.find(x => x.id === ruleId);
+  if (!r) return;
+  openModal(`
+    <h3>Edit Channel Rule</h3>
+    <form id="rule-form" onsubmit="handleRuleSubmit(event, ${ruleId})">
+      <label class="label">Rule Name</label>
+      <input class="input block" name="name" value="${esc(r.name)}" required>
+      
+      <label class="label" style="margin-top:10px;">Target Package(s)</label>
+      <input class="input block" name="target_packages" value="${esc((r.target_packages || []).join(', '))}" required>
+
+      <label class="label" style="margin-top:10px;">Regex Patterns (one per line)</label>
+      <textarea class="input block" name="patterns" rows="3" required>${esc((r.patterns || []).join('\n'))}</textarea>
+
+      <label class="label" style="margin-top:10px;">Action</label>
+      <select class="input block" name="action">
+        <option value="auto_skip" ${r.action === 'auto_skip' ? 'selected' : ''}>auto_skip (Advance channel / D-pad)</option>
+        <option value="force_stop" ${r.action === 'force_stop' ? 'selected' : ''}>force_stop (Kill streaming app)</option>
+        <option value="back" ${r.action === 'back' ? 'selected' : ''}>back (Send BACK key twice)</option>
+        <option value="home" ${r.action === 'home' ? 'selected' : ''}>home (Return to Google TV launcher)</option>
+        <option value="mute" ${r.action === 'mute' ? 'selected' : ''}>mute (Mute volume)</option>
+      </select>
+
+      <label class="label" style="margin-top:10px;">Description</label>
+      <input class="input block" name="description" value="${esc(r.description || '')}">
+
+      <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:8px;">
+        <button type="button" class="btn secondary" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn primary">Update Rule</button>
+      </div>
+    </form>
+  `);
+}
+
+async function handleRuleSubmit(e, ruleId = null) {
+  e.preventDefault();
+  const form = e.target;
+  const targetPkgs = form.target_packages.value.split(',').map(s => s.trim()).filter(Boolean);
+  const patterns = form.patterns.value.split('\n').map(s => s.trim()).filter(Boolean);
+  
+  const payload = {
+    name: form.name.value.trim(),
+    target_packages: targetPkgs,
+    patterns: patterns,
+    action: form.action.value,
+    description: form.description.value.trim(),
+  };
+
   try {
-    await api(`/api/devices/${d.id}`, { method: "DELETE" });
-    toast(`Removed ${d.name}`);
-    state.view = "home";
-    state.selectedId = null;
-    await refresh();
+    if (ruleId) {
+      await api(`/api/guard/rules/${ruleId}`, { method: "PATCH", body: payload });
+      toast("Rule updated");
+    } else {
+      await api("/api/guard/rules", { method: "POST", body: payload });
+      toast("Rule created");
+    }
+    closeModal();
+    await loadChannelRules();
     renderMain();
-  } catch (e) { toast(e.message, "error"); }
+  } catch (err) {
+    toast("Failed: " + err.message, "down");
+  }
 }
 
-/* ------------------------------------------------------------------ init */
+async function toggleRuleEnabled(id, enabled) {
+  try {
+    await api(`/api/guard/rules/${id}`, { method: "PATCH", body: { enabled } });
+    await loadChannelRules();
+    toast(`Rule ${enabled ? 'enabled' : 'disabled'}`);
+  } catch (e) {
+    toast(e.message, "down");
+  }
+}
 
-async function init() {
-  $("#btn-add").addEventListener("click", showAdd);
-  try { state.profiles = await api("/api/profiles"); }
-  catch (e) { toast(`Failed to load profiles: ${e.message}`, "error"); }
-  await refresh(true);
+async function deleteRuleConfirm(id) {
+  if (!confirm("Are you sure you want to delete this rule?")) return;
+  try {
+    await api(`/api/guard/rules/${id}`, { method: "DELETE" });
+    await loadChannelRules();
+    renderMain();
+    toast("Rule deleted");
+  } catch (e) {
+    toast(e.message, "down");
+  }
+}
+
+async function runPatternTest() {
+  const pattern = $("#test-pattern").value;
+  const sample = $("#test-sample").value;
+  const out = $("#test-result");
+  if (!pattern || !sample) {
+    out.innerHTML = `<span style="color:var(--warn)">Please enter both a pattern and sample text.</span>`;
+    return;
+  }
+  try {
+    const res = await api("/api/guard/test-pattern", { method: "POST", body: { pattern, sample_text: sample } });
+    if (res.matched) {
+      out.innerHTML = `<span style="color:var(--accent)">✓ Match Found: "${esc(res.matched_text)}"</span>`;
+    } else {
+      out.innerHTML = `<span style="color:var(--muted)">✗ No match</span>`;
+    }
+  } catch (e) {
+    out.innerHTML = `<span style="color:var(--down)">Error: ${esc(e.message)}</span>`;
+  }
+}
+
+/* ------------------------------------------------------- live inspector view */
+
+function openLiveInspectorFor(deviceId) {
+  state.inspectingId = deviceId;
+  switchMainTab("inspector");
+  runInspection();
+}
+
+function renderInspectorView(main) {
+  const devOptions = state.devices.map(d => 
+    `<option value="${d.id}" ${d.id === state.inspectingId ? 'selected' : ''}>${esc(d.name)} (${esc(d.host)})</option>`
+  ).join("");
+
+  const res = state.inspectResult;
+
+  main.innerHTML = `
+    <div class="device-header">
+      <div>
+        <h2>Live Diagnostic Payload Inspector</h2>
+        <div class="hint">Inspect real-time media sessions and window state emitted by YouTube TV / Google TV</div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <select id="inspect-select" class="input" style="width:240px;" onchange="state.inspectingId = Number(this.value)">
+          <option value="">-- Select TV --</option>
+          ${devOptions}
+        </select>
+        <button class="btn primary" onclick="runInspection()">🔍 Inspect TV Now</button>
+      </div>
+    </div>
+
+    ${res ? `
+      <!-- Parsed Diagnostics -->
+      <div class="card">
+        <h3>Inspection Result: ${esc(res.device_name || '')}</h3>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:10px;">
+          <div>
+            <div><b>Screen Interactive:</b> ${res.screen_on ? '<span style="color:var(--accent)">ON</span>' : '<span style="color:var(--idle)">OFF (Standby)</span>'}</div>
+            <div><b>Foreground App:</b> <code>${esc(res.foreground_package || 'None')}</code></div>
+            <div><b>Playback State:</b> ${esc(res.parsed_metadata?.playback_state || 'unknown')}</div>
+          </div>
+          <div>
+            <div><b>Media Title:</b> <b>${esc(res.parsed_metadata?.title || 'None')}</b></div>
+            <div><b>Subtitle / Artist:</b> ${esc(res.parsed_metadata?.subtitle || 'None')}</div>
+            <div><b>Searchable Text:</b> <span class="hint">${esc(res.parsed_metadata?.full_text || '')}</span></div>
+          </div>
+        </div>
+
+        ${res.matched_rule ? `
+          <div style="margin-top:14px; padding:10px; background:var(--warn-dim); border:1px solid var(--warn); border-radius:6px;">
+            ⚠️ <b>Rule Triggered:</b> ${esc(res.matched_rule.rule_name)} (Pattern: <code>${esc(res.matched_rule.pattern)}</code>)
+            <br>Matched Text: <b>"${esc(res.matched_rule.matched_text)}"</b> &rarr; Action: <b>${esc(res.matched_rule.action)}</b>
+          </div>
+        ` : `<div style="margin-top:14px; color:var(--accent);">✓ No restricted rules matched current playback.</div>`}
+      </div>
+
+      <!-- Raw Payloads -->
+      <div class="inspector-grid">
+        <div class="card">
+          <h4>Raw dumpsys media_session</h4>
+          <div class="raw-dump-box">${esc(res.raw?.media_session || "No session data")}</div>
+        </div>
+        <div class="card">
+          <h4>Raw dumpsys window focus</h4>
+          <div class="raw-dump-box">${esc(res.raw?.window || "No window data")}</div>
+        </div>
+      </div>
+    ` : `
+      <div class="card empty-list">
+        Select a TV above and click <b>Inspect TV Now</b> to query real-time dumpsys output.
+      </div>
+    `}
+  `;
+}
+
+async function runInspection() {
+  const select = $("#inspect-select");
+  const devId = state.inspectingId || (select ? Number(select.value) : null);
+  if (!devId) {
+    toast("Please select a device to inspect", "warn");
+    return;
+  }
+  state.inspectingId = devId;
+  toast("Querying TV over ADB...", "ok");
+  try {
+    state.inspectResult = await api(`/api/guard/devices/${devId}/inspect`);
+    if (!state.inspectResult.ok) {
+      toast("Inspection failed: " + state.inspectResult.error, "down");
+    }
+    renderMain();
+  } catch (e) {
+    toast("Inspection error: " + e.message, "down");
+  }
+}
+
+/* ------------------------------------------------------------- actions */
+
+async function snoozeDevicePrompt(devId) {
+  try {
+    await api(`/api/guard/devices/${devId}/snooze`, { method: "POST", body: { duration_s: 1800 } });
+    toast("Protection snoozed for 30 minutes");
+    await refresh();
+  } catch (e) {
+    toast(e.message, "down");
+  }
+}
+
+async function unsnoozeDevice(devId) {
+  try {
+    await api(`/api/guard/devices/${devId}/unsnooze`, { method: "POST" });
+    toast("Protection resumed");
+    await refresh();
+  } catch (e) {
+    toast(e.message, "down");
+  }
+}
+
+async function toggleDeviceMode(devId) {
+  const dev = deviceById(devId);
+  if (!dev) return;
+  const newMode = dev.mode === "enforce" ? "monitor" : "enforce";
+  try {
+    await api(`/api/devices/${devId}`, { method: "PATCH", body: { mode: newMode } });
+    toast(`Mode set to ${newMode}`);
+    await refresh();
+  } catch (e) {
+    toast(e.message, "down");
+  }
+}
+
+async function triggerAudit(devId) {
+  toast("Auditing device settings against profile...", "ok");
+  try {
+    await api(`/api/devices/${devId}/audit`, { method: "POST" });
+    await refresh();
+    toast("Audit complete");
+  } catch (e) {
+    toast("Audit failed: " + e.message, "down");
+  }
+}
+
+async function deleteDeviceConfirm(devId) {
+  if (!confirm("Are you sure you want to delete this device from Warden?")) return;
+  try {
+    await api(`/api/devices/${devId}`, { method: "DELETE" });
+    state.selectedId = null;
+    state.view = "home";
+    await refresh();
+    toast("Device deleted");
+  } catch (e) {
+    toast(e.message, "down");
+  }
+}
+
+/* ------------------------------------------------------------ add device */
+
+function showAdd() {
+  state.view = "add";
+  state.mainTab = "devices";
+  switchMainTab("devices");
   renderMain();
-  setInterval(refresh, 5000);
+  startDiscovery();
 }
 
-init();
+function renderAdd(main) {
+  const profiles = state.profiles.map((p) =>
+    `<option value="${p.id}">${esc(p.name)} (${esc(p.connector)})</option>`).join("");
+
+  main.innerHTML = `
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h3>Discovered Devices on LAN</h3>
+        <button class="btn secondary sm" onclick="startDiscovery()">⟳ Scan LAN</button>
+      </div>
+      <div id="discovery-results" style="margin-top:12px;">
+        <div class="hint">Scanning mDNS and subnet...</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Add Device Manually</h3>
+      <form id="manual-add-form" onsubmit="handleManualAdd(event)">
+        <label class="label">Device Name</label>
+        <input class="input block" name="name" placeholder="e.g. Living Room TCL" required>
+
+        <label class="label" style="margin-top:10px;">Host IP</label>
+        <input class="input block" name="host" placeholder="e.g. 10.10.40.50" required>
+
+        <label class="label" style="margin-top:10px;">Port</label>
+        <input class="input block" name="port" type="number" value="5555" required>
+
+        <label class="label" style="margin-top:10px;">Profile</label>
+        <select class="input block" name="profile_id">
+          <option value="">-- Select Profile --</option>
+          ${profiles}
+        </select>
+
+        <label class="label" style="margin-top:10px;">Location</label>
+        <input class="input block" name="location" placeholder="e.g. Living Room">
+
+        <div style="margin-top:16px; display:flex; gap:8px;">
+          <button type="submit" class="btn primary">Add Device</button>
+          <button type="button" class="btn secondary" onclick="selectDevice(null)">Cancel</button>
+        </div>
+      </form>
+    </div>
+  `;
+}
+
+async function startDiscovery() {
+  try {
+    const res = await api("/api/discovery/scan", { method: "POST", body: { mdns: true, duration_s: 4 } });
+    pollDiscovery(res.scan_id);
+  } catch (e) {
+    $("#discovery-results").innerHTML = `<div class="hint">Discovery error: ${esc(e.message)}</div>`;
+  }
+}
+
+async function pollDiscovery(scanId) {
+  try {
+    const res = await api(`/api/discovery/scan/${scanId}`);
+    const results = res.results || [];
+    const div = $("#discovery-results");
+    if (!div) return;
+    if (!results.length) {
+      div.innerHTML = `<div class="hint">${res.active ? "Scanning..." : "No new devices discovered."}</div>`;
+      if (res.active) setTimeout(() => pollDiscovery(scanId), 1500);
+      return;
+    }
+    div.innerHTML = results.map(r => `
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border);">
+        <div>
+          <b>${esc(r.name || r.host)}</b> &middot; <code>${esc(r.host)}:${r.port}</code>
+          <div class="hint">${esc(r.suggested_profile_id || "Generic")} &middot; via ${esc(r.source)}</div>
+        </div>
+        <button class="btn primary sm" onclick="addDiscoveredDevice('${esc(r.host)}', ${r.port}, '${esc(r.name)}', '${esc(r.suggested_profile_id || '')}')">＋ Add</button>
+      </div>
+    `).join("");
+    if (res.active) setTimeout(() => pollDiscovery(scanId), 1500);
+  } catch {}
+}
+
+async function addDiscoveredDevice(host, port, name, profileId) {
+  try {
+    const dev = await api("/api/devices", {
+      method: "POST",
+      body: { host, port, name: name || host, profile_id: profileId || null, mode: "enforce" }
+    });
+    toast(`Added ${dev.name}`);
+    await refresh();
+    selectDevice(dev.id);
+  } catch (e) {
+    toast("Failed to add: " + e.message, "down");
+  }
+}
+
+async function handleManualAdd(e) {
+  e.preventDefault();
+  const f = e.target;
+  try {
+    const dev = await api("/api/devices", {
+      method: "POST",
+      body: {
+        name: f.name.value.trim(),
+        host: f.host.value.trim(),
+        port: Number(f.port.value),
+        profile_id: f.profile_id.value || null,
+        location: f.location.value.trim(),
+        mode: "enforce",
+      }
+    });
+    toast(`Added ${dev.name}`);
+    await refresh();
+    selectDevice(dev.id);
+  } catch (err) {
+    toast("Failed to add: " + err.message, "down");
+  }
+}
+
+document.addEventListener("DOMContentLoaded", init);

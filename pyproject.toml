@@ -1,0 +1,38 @@
+[project]
+name = "warden"
+version = "0.2.0"
+description = "Intelligent governance, privacy sanitization, and channel guard for smart TVs"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "pydantic>=2.10.0",
+    "adb-shell>=0.4.4",
+    "zeroconf>=0.132.0",
+    "PyYAML>=6.0.0",
+    "paramiko>=3.5.0",
+    "paho-mqtt>=2.1.0",
+    "requests>=2.32.0",
+    "jinja2>=3.1.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.25.0",
+    "httpx>=0.28.0",
+    "ruff>=0.8.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

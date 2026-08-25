@@ -104,7 +104,7 @@ class DiscoveryService:
                 self._sweep_subnet(found, subnet)
             self._probe_adb(found)
             self._annotate(found)
-        except Exception as exc:  # noqa: BLE001 - surface scan failures in the UI
+        except Exception as exc:
             log.exception("discovery scan failed")
             with self._lock:
                 self._error = str(exc)

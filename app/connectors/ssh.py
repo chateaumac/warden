@@ -5,7 +5,6 @@ Credentials live in the device's connector config:
     {"username": "root", "password": "..."} or {"username": "root", "key_path": "/data/ssh/id_ed25519"}
 """
 
-import socket
 
 import paramiko
 
@@ -37,7 +36,7 @@ class SshConnector(BaseConnector):
             client.connect(**kwargs)
         except paramiko.AuthenticationException as exc:
             raise Unauthorized(f"SSH authentication failed: {exc}") from exc
-        except (socket.timeout, OSError, paramiko.SSHException) as exc:
+        except (TimeoutError, OSError, paramiko.SSHException) as exc:
             raise Unreachable(f"cannot reach {self.host}:{self.port} ({exc})") from exc
         self._client = client
         try:
@@ -52,7 +51,7 @@ class SshConnector(BaseConnector):
             _stdin, stdout, stderr = self._client.exec_command(cmd, timeout=30)
             out = stdout.read().decode(errors="replace")
             err = stderr.read().decode(errors="replace")
-        except (paramiko.SSHException, socket.timeout, OSError) as exc:
+        except (TimeoutError, paramiko.SSHException, OSError) as exc:
             raise ConnectorError(f"ssh exec failed: {exc}") from exc
         if err:
             out = out + ("\n" if out else "") + err

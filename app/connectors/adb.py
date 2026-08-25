@@ -6,7 +6,6 @@ authorization dialog once per device.
 """
 
 import logging
-import socket
 import threading
 from pathlib import Path
 
@@ -65,7 +64,7 @@ class AdbConnector(BaseConnector):
             # TCP connected but the ADB handshake never finished — almost always
             # an authorization dialog waiting on screen
             raise Unauthorized(f"timed out waiting for authorization — {AUTH_HINT}") from exc
-        except (adb_exc.TcpTimeoutException, ConnectionRefusedError, socket.timeout, OSError) as exc:
+        except (TimeoutError, adb_exc.TcpTimeoutException, ConnectionRefusedError, OSError) as exc:
             raise Unreachable(
                 f"cannot reach {self.host}:{self.port} ({exc or exc.__class__.__name__})"
             ) from exc
