@@ -1,0 +1,94 @@
+# Chromecast with Google TV / Google TV Streamer / TVs running the Google TV launcher
+id: google-tv
+name: Google TV / Chromecast
+connector: adb
+default_port: 5555
+description: >
+  Chromecast with Google TV and TVs running the Google TV launcher. Kills
+  sponsored launcher content and the recommendation tracking service, and can
+  force OS-level Private DNS (DoT) through your sinkhole.
+match:
+  keywords: ["chromecast", "google tv", "googletv", "sabrina"]
+  mdns_types: ["_googlecast._tcp.local."]
+vars:
+  - name: private_dns_host
+    label: Private DNS (DoT) hostname
+    description: >
+      DNS-over-TLS hostname of your sinkhole, e.g. abc123.dns.nextdns.io or
+      your AdGuard Home / Pi-hole DoT endpoint. Required by the Private DNS
+      actions — leave empty to keep them skipped.
+howto: |
+  ## Enable ADB debugging (Google TV / Chromecast)
+
+  1. On the device: **Settings → System → About**
+  2. Scroll to **Android TV OS build** and click it **7 times** — "You are now a developer!"
+  3. Back in **Settings → System → Developer options**
+  4. Enable **USB debugging**. If your device also shows a **Wireless debugging**
+     or **Network debugging** toggle, enable that too.
+  5. Make sure the device is reachable from Warden (same VLAN or routed, TCP 5555).
+  6. Add the device here and hit **Connect** — then look at the TV: accept the
+     *"Allow USB debugging?"* dialog and tick **Always allow from this computer**.
+
+  > Some devices keep port 5555 closed after a reboot until ADB is poked awake.
+  > If Connect reports *unreachable* right after a reboot, toggle
+  > Developer options → USB debugging off and on once.
+actions:
+  - id: disable-launcher-ads
+    name: Disable launcher ads
+    type: package_disable
+    package: com.google.android.tvlauncher.ads
+    default: true
+    description: >
+      Sponsored rows and banner ads served by the stock launcher. Safe to
+      disable; the launcher keeps working.
+  - id: disable-tv-recommendations
+    name: Disable recommendations engine
+    type: package_disable
+    package: com.google.android.tvrecommendations
+    default: true
+    description: >
+      Background service that tracks viewing to build "recommended for you"
+      rows — the tracking half of the launcher ad machine.
+  - id: disable-backdrop
+    name: Disable ambient-mode promo content
+    type: package_disable
+    package: com.google.android.backdrop
+    default: false
+    description: >
+      The ambient/screensaver backdrop service, which mixes promotional
+      imagery into the slideshow. Disable if you don't use ambient mode.
+  - id: disable-play-games
+    name: Disable Google Play Games
+    type: package_disable
+    package: com.google.android.play.games
+    default: false
+    description: Preinstalled and phones home. Disable unless you game on this device.
+  - id: disable-google-tv-storefront
+    name: Disable Google TV storefront app
+    type: package_disable
+    package: com.google.android.videos
+    default: false
+    description: >
+      The Google TV movies/shows storefront app. Only disable if you never
+      rent or buy through Google TV.
+  - id: private-dns-mode
+    name: Force Private DNS (DoT)
+    type: setting
+    namespace: global
+    key: private_dns_mode
+    value: hostname
+    default: false
+    requires_vars: [private_dns_host]
+    description: >
+      Forces every app on the device through your encrypted DNS sinkhole at
+      the OS level — defeats hardcoded plain-DNS evasion. Enable together with
+      the sinkhole hostname action below.
+  - id: private-dns-host
+    name: Private DNS sinkhole hostname
+    type: setting
+    namespace: global
+    key: private_dns_specifier
+    value: "{var:private_dns_host}"
+    default: false
+    requires_vars: [private_dns_host]
+    description: Points the OS resolver at your DoT sinkhole (NextDNS, AdGuard Home, ...).

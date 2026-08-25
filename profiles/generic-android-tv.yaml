@@ -1,0 +1,67 @@
+# Fallback profile for any Android TV / Google TV device Warden can't identify
+id: generic-android-tv
+name: Generic Android TV
+connector: adb
+default_port: 5555
+description: >
+  Conservative baseline for any Android TV / Google TV device: the two
+  Google launcher ad/tracking packages plus optional Private DNS enforcement.
+# no keywords on purpose: specific profiles (Sony/Shield/Chromecast) must win
+# keyword scoring; discovery falls back to this profile for unidentified
+# devices with an open ADB port.
+match:
+  keywords: []
+  mdns_types:
+    - "_androidtvremote2._tcp.local."
+    - "_adb-tls-connect._tcp.local."
+    - "_adb._tcp.local."
+vars:
+  - name: private_dns_host
+    label: Private DNS (DoT) hostname
+    description: >
+      DNS-over-TLS hostname of your sinkhole, e.g. abc123.dns.nextdns.io.
+      Required by the Private DNS actions — leave empty to keep them skipped.
+howto: |
+  ## Enable ADB debugging (Android TV)
+
+  1. On the device: **Settings → System (or Device Preferences) → About**
+  2. Click the **Build / Android TV OS build** entry **7 times** to unlock
+     Developer options.
+  3. In **Developer options**, enable **USB debugging** (and **Network /
+     Wireless debugging** if your device shows it).
+  4. Add the device here and hit **Connect** — accept the
+     *"Allow USB debugging?"* dialog on screen and tick
+     **Always allow from this computer**.
+actions:
+  - id: disable-launcher-ads
+    name: Disable launcher ads
+    type: package_disable
+    package: com.google.android.tvlauncher.ads
+    default: true
+    description: Sponsored rows and banner ads served by the stock Google launcher.
+  - id: disable-tv-recommendations
+    name: Disable recommendations engine
+    type: package_disable
+    package: com.google.android.tvrecommendations
+    default: true
+    description: Background service that tracks viewing to build recommendation rows.
+  - id: private-dns-mode
+    name: Force Private DNS (DoT)
+    type: setting
+    namespace: global
+    key: private_dns_mode
+    value: hostname
+    default: false
+    requires_vars: [private_dns_host]
+    description: >
+      Forces every app on the device through your encrypted DNS sinkhole at
+      the OS level. Enable together with the sinkhole hostname action below.
+  - id: private-dns-host
+    name: Private DNS sinkhole hostname
+    type: setting
+    namespace: global
+    key: private_dns_specifier
+    value: "{var:private_dns_host}"
+    default: false
+    requires_vars: [private_dns_host]
+    description: Points the OS resolver at your DoT sinkhole.

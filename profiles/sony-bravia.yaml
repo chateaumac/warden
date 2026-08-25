@@ -1,0 +1,74 @@
+# Sony Bravia TVs running Android TV / Google TV
+id: sony-bravia
+name: Sony Bravia (Android TV)
+connector: adb
+default_port: 5555
+description: >
+  Sony Bravia TVs on Android TV / Google TV. Disables Google launcher ads and
+  recommendation tracking plus Sony's own promotional layer, and can force
+  Private DNS (DoT) through your sinkhole.
+match:
+  keywords: ["sony", "bravia", "xbr-", "kd-", "kdl-"]
+vars:
+  - name: private_dns_host
+    label: Private DNS (DoT) hostname
+    description: >
+      DNS-over-TLS hostname of your sinkhole, e.g. abc123.dns.nextdns.io.
+      Required by the Private DNS actions — leave empty to keep them skipped.
+howto: |
+  ## Enable ADB debugging (Sony Bravia)
+
+  1. On the TV: **Settings → System → About** (older models:
+     **Settings → Device Preferences → About**)
+  2. Scroll to **Build** and click it **7 times** — "You are now a developer!"
+  3. Open the new **Developer options** menu (under System or Device Preferences)
+  4. Enable **USB debugging**, and **Network debugging** if shown.
+  5. Add the TV here and hit **Connect** — then accept the
+     *"Allow USB debugging?"* dialog on the TV and tick
+     **Always allow from this computer**.
+
+  > During initial TV setup Sony also offers **Samba Interactive TV** (ACR
+  > viewing tracking). If you accepted it, check Settings → Apps for a Samba
+  > entry — the package name varies by region, so add it as a custom shell
+  > action or disable it in the TV menu directly.
+actions:
+  - id: disable-launcher-ads
+    name: Disable launcher ads
+    type: package_disable
+    package: com.google.android.tvlauncher.ads
+    default: true
+    description: Sponsored rows and banner ads served by the stock Google launcher.
+  - id: disable-tv-recommendations
+    name: Disable recommendations engine
+    type: package_disable
+    package: com.google.android.tvrecommendations
+    default: true
+    description: Background service that tracks viewing to build recommendation rows.
+  - id: disable-sony-select
+    name: Disable Sony Select
+    type: package_disable
+    package: com.sony.dtv.sonyselect
+    default: true
+    description: >
+      Sony's own promotional "recommended apps & offers" channel that injects
+      content rows into the home screen.
+  - id: private-dns-mode
+    name: Force Private DNS (DoT)
+    type: setting
+    namespace: global
+    key: private_dns_mode
+    value: hostname
+    default: false
+    requires_vars: [private_dns_host]
+    description: >
+      Forces every app on the TV through your encrypted DNS sinkhole at the OS
+      level. Enable together with the sinkhole hostname action below.
+  - id: private-dns-host
+    name: Private DNS sinkhole hostname
+    type: setting
+    namespace: global
+    key: private_dns_specifier
+    value: "{var:private_dns_host}"
+    default: false
+    requires_vars: [private_dns_host]
+    description: Points the OS resolver at your DoT sinkhole.

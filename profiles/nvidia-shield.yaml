@@ -1,0 +1,81 @@
+# NVIDIA Shield TV / Shield TV Pro
+id: nvidia-shield
+name: NVIDIA Shield TV
+connector: adb
+default_port: 5555
+description: >
+  NVIDIA Shield TV and Shield TV Pro. Disables Google launcher ads and
+  recommendation tracking plus NVIDIA's telemetry/feedback service, and can
+  force Private DNS (DoT) through your sinkhole.
+match:
+  keywords: ["shield", "nvidia"]
+vars:
+  - name: private_dns_host
+    label: Private DNS (DoT) hostname
+    description: >
+      DNS-over-TLS hostname of your sinkhole, e.g. abc123.dns.nextdns.io.
+      Required by the Private DNS actions — leave empty to keep them skipped.
+howto: |
+  ## Enable ADB debugging (NVIDIA Shield)
+
+  1. On the Shield: **Settings → Device Preferences → About**
+  2. Scroll to **Build** and click it **7 times** — "You are now a developer!"
+  3. **Settings → Device Preferences → Developer options**
+  4. Enable **USB debugging** and **Network debugging** (the Shield has an
+     explicit network debugging toggle — that's the one Warden uses).
+  5. Add the Shield here and hit **Connect** — then accept the
+     *"Allow USB debugging?"* dialog on screen and tick
+     **Always allow from this computer**.
+actions:
+  - id: disable-launcher-ads
+    name: Disable launcher ads
+    type: package_disable
+    package: com.google.android.tvlauncher.ads
+    default: true
+    description: Sponsored rows and banner ads served by the stock launcher.
+  - id: disable-tv-recommendations
+    name: Disable recommendations engine
+    type: package_disable
+    package: com.google.android.tvrecommendations
+    default: true
+    description: Background service that tracks viewing to build recommendation rows.
+  - id: disable-nvidia-feedback
+    name: Disable NVIDIA telemetry / feedback
+    type: package_disable
+    package: com.nvidia.feedback
+    default: true
+    description: NVIDIA's crash-report and usage telemetry uploader.
+  - id: disable-plex-server
+    name: Disable preinstalled Plex Media Server
+    type: package_disable
+    package: com.plexapp.mediaserver.smb
+    default: false
+    description: >
+      The Plex Media Server NVIDIA preinstalls (not the Plex client app).
+      Disable if you run Plex elsewhere or not at all.
+  - id: disable-amazon-preinstall
+    name: Disable Prime Video preinstall
+    type: package_disable
+    package: com.amazon.amazonvideo.livingroom
+    default: false
+    description: Preinstalled Prime Video. Disable only if you never use it.
+  - id: private-dns-mode
+    name: Force Private DNS (DoT)
+    type: setting
+    namespace: global
+    key: private_dns_mode
+    value: hostname
+    default: false
+    requires_vars: [private_dns_host]
+    description: >
+      Forces every app on the device through your encrypted DNS sinkhole at
+      the OS level. Enable together with the sinkhole hostname action below.
+  - id: private-dns-host
+    name: Private DNS sinkhole hostname
+    type: setting
+    namespace: global
+    key: private_dns_specifier
+    value: "{var:private_dns_host}"
+    default: false
+    requires_vars: [private_dns_host]
+    description: Points the OS resolver at your DoT sinkhole.
