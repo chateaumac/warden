@@ -1,18 +1,27 @@
 services:
   warden:
-    build: .
-    image: warden:latest
+    image: ghcr.io/chateaumac/warden:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: warden
     restart: unless-stopped
     ports:
       - "8484:8484"
     volumes:
+      # Persistent storage for SQLite database, persistent ADB keys, and custom profiles
       - warden_data:/data
     environment:
-      - WARDEN_AUDIT_INTERVAL=900
-      - WARDEN_GUARD_INTERVAL=1.5
       - WARDEN_DATA_DIR=/data
-    # host networking can be enabled if mDNS discovery across subnets requires it:
+      - WARDEN_AUDIT_INTERVAL=${WARDEN_AUDIT_INTERVAL:-900}
+      - WARDEN_GUARD_INTERVAL=${WARDEN_GUARD_INTERVAL:-1.2}
+      - WARDEN_DISCOVERY_SUBNET=${WARDEN_DISCOVERY_SUBNET:-}
+      - NOTIFY_URL=${NOTIFY_URL:-}
+      - MQTT_HOST=${MQTT_HOST:-}
+      - MQTT_PORT=${MQTT_PORT:-1883}
+      - MQTT_USER=${MQTT_USER:-}
+      - MQTT_PASSWORD=${MQTT_PASSWORD:-}
+    # Note: Enable host networking if mDNS device discovery across local subnets requires it:
     # network_mode: host
 
 volumes:
