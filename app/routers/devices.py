@@ -33,7 +33,7 @@ def create_device(body: DeviceCreate, request: Request) -> dict:
     port = body.port or (profile.default_port if profile else DEFAULT_PORTS[body.connector])
     try:
         device = state.db.create_device(
-            name=body.name or body.host, host=body.host, port=port,
+            name=body.name or body.host, location=body.location, host=body.host, port=port,
             connector=body.connector, profile_id=body.profile_id,
             mode=body.mode, vars=body.vars, config=body.config,
         )

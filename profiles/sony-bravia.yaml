@@ -52,6 +52,75 @@ actions:
     description: >
       Sony's own promotional "recommended apps & offers" channel that injects
       content rows into the home screen.
+  - id: disable-samba-acr
+    name: Disable Samba Interactive TV (ACR)
+    type: package_disable
+    package: tv.samba.ssm
+    default: true
+    description: >
+      Automatic content recognition — tracks everything shown on screen
+      across all HDMI inputs (not just apps) and sells viewing data to
+      advertisers. Newer Google TV Bravia models often ship this enabled.
+  - id: disable-samba-acr-ui
+    name: Disable Samba Interactive TV UI
+    type: package_disable
+    package: tv.samba.ssm.ui
+    default: true
+    description: Companion UI/consent package for Samba Interactive TV.
+  - id: disable-qterics-analytics
+    name: Disable Qterics data analytics
+    type: package_disable
+    package: com.qterics.da.product
+    default: true
+    description: Third-party viewing-analytics SDK bundled by Sony on some models.
+  - id: disable-sony-da-service
+    name: Disable Sony device analytics service
+    type: package_disable
+    package: com.sony.dtv.da.service
+    default: true
+    description: Sony's own device-analytics/telemetry service.
+  - id: disable-sony-promos
+    name: Disable Sony promotional content
+    type: package_disable
+    package: com.sony.dtv.promos
+    default: true
+    description: Sony's promotional / sponsored-content package.
+  - id: disable-sony-idd-agent
+    name: Disable Sony diagnostics & telemetry agent
+    type: package_disable
+    package: com.sonyericsson.idd.agent
+    default: true
+    description: Sony's "Information Delivery & Diagnostics" agent - crash and usage telemetry.
+  - id: disable-tv-dreamx
+    name: Disable Google TV ambient mode (Dream)
+    type: package_disable
+    package: com.google.android.apps.tv.dreamx
+    default: false
+    description: >
+      Google TV's ambient/screensaver mode, which surfaces promoted content
+      and art. Disabling removes the screensaver entirely - opt in.
+  - id: disable-sony-usercontext
+    name: Disable Sony user-context tracking
+    type: package_disable
+    package: com.sony.dtv.usercontext
+    default: false
+    description: >
+      Feeds personalization/recommendation rows (e.g. "continue watching").
+      Disabling stops behavioral tracking but also removes that feature.
+  - id: disable-sony-lastaccess
+    name: Disable Sony last-access tracking
+    type: package_disable
+    package: com.sony.dtv.lastaccess
+    default: false
+    description: >
+      Tracks recently-used apps to populate home-screen rows. Disabling
+      stops tracking but also removes the "recent apps" row.
+  - id: disable-sonypicturescore
+    name: Disable Sony Pictures Core (Bravia Core)
+    type: package_disable
+    package: com.sonypicturescore
+    default: false
+    description: Sony's preinstalled movie storefront / streaming app.
   - id: private-dns-mode
     name: Force Private DNS (DoT)
     type: setting

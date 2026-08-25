@@ -91,7 +91,7 @@ function mdLite(text) {
   const lines = [];
   for (const raw of (text || "").split("\n")) {
     const trimmed = raw.trim();
-    const startsBlock = /^(##\s|>\s?|\d+\.\s|[-*]\s)/.test(trimmed) || trimmed === "";
+    const startsBlock = /^(#{2,}\s|>\s?|\d+\.\s|[-*]\s)/.test(trimmed) || trimmed === "";
     if (!startsBlock && lines.length && lines[lines.length - 1].trim() !== "") {
       lines[lines.length - 1] += " " + trimmed;
     } else {
@@ -110,7 +110,8 @@ function mdLite(text) {
       .replace(/`(.+?)`/g, "<code>$1</code>");
     if (/^&gt;\s?/.test(line)) { closeList(); quote.push(line.replace(/^&gt;\s?/, "")); continue; }
     flushQuote();
-    if (/^##\s+/.test(line)) { closeList(); html += `<h2>${line.replace(/^##\s+/, "")}</h2>`; }
+    const heading = line.match(/^(#{2,})\s+(.*)$/);
+    if (heading) { closeList(); const lvl = Math.min(heading[1].length, 4); html += `<h${lvl}>${heading[2]}</h${lvl}>`; }
     else if (/^\d+\.\s+/.test(line)) {
       if (list !== "ol") { closeList(); html += "<ol>"; list = "ol"; }
       html += `<li>${line.replace(/^\d+\.\s+/, "")}</li>`;
@@ -199,7 +200,7 @@ function renderSidebar() {
         <span class="dot ${d.enabled ? meta.cls : "idle"}"></span>
         <div>
           <div class="di-name">${esc(d.name)}</div>
-          <div class="di-sub">${esc(d.host)}${profile ? " · " + esc(profile.name) : ""}</div>
+          <div class="di-sub">${esc(d.location || d.host)}${profile ? " · " + esc(profile.name) : ""}</div>
         </div>
         <div class="di-status">${d.enabled ? esc(meta.label) : "paused"}<br>${esc(timeAgo(d.last_audit))}</div>
       </div>`;
@@ -455,6 +456,7 @@ function renderDevice(main, d) {
     <div class="detail-head">
       <div>
         <h2>${esc(d.name)}</h2>
+        ${d.location ? `<div class="sub">📍 ${esc(d.location)}</div>` : ""}
         <div class="sub">${esc(d.host)}:${d.port} · ${esc(d.connector)}${ident ? " · " + esc(ident) : ""}</div>
         <div style="margin-top:8px" class="row-gap">
           <span class="pill ${meta.cls}"><span class="dot ${meta.cls}"></span>${esc(meta.label)}</span>
@@ -463,6 +465,7 @@ function renderDevice(main, d) {
         </div>
       </div>
       <div class="head-actions">
+        <button class="btn" id="btn-edit">✎ Edit</button>
         <button class="btn" id="btn-connect">🔌 Connect</button>
         <button class="btn" id="btn-audit">🔎 Audit now</button>
         <button class="btn warn" id="btn-enforce">⚡ Enforce now</button>
@@ -516,6 +519,7 @@ function renderDevice(main, d) {
       ${eventsHtml}
     </div>`;
 
+  $("#btn-edit").addEventListener("click", () => editDevice(d));
   $("#btn-connect").addEventListener("click", () => connectDevice(d));
   $("#btn-audit").addEventListener("click", () => runOp(d.id, "audit", "Audit"));
   $("#btn-enforce").addEventListener("click", () => runOp(d.id, "enforce", "Enforce"));
@@ -535,6 +539,30 @@ function renderDevice(main, d) {
     const overrides = { ...(d.action_overrides || {}), [cb.dataset.action]: cb.checked };
     patchDevice(d.id, { action_overrides: overrides });
   }));
+}
+
+function editDevice(d) {
+  openModal(`
+    <h3>Edit device</h3>
+    <label class="fld"><b>Name</b>
+      <input type="text" id="edit-name" value="${esc(d.name)}" placeholder="e.g. Regan's Office TV"></label>
+    <label class="fld"><b>Location</b>
+      <input type="text" id="edit-location" value="${esc(d.location || "")}" placeholder="e.g. Regan's Office">
+      <span>Where the device physically lives — shown in the sidebar.</span>
+    </label>
+    <div class="row-gap" style="margin-top:12px">
+      <button class="btn primary" id="edit-save">Save</button>
+      <button class="btn ghost" id="edit-cancel">Cancel</button>
+    </div>`);
+  $("#edit-cancel").addEventListener("click", closeModal);
+  $("#edit-name").focus();
+  $("#edit-save").addEventListener("click", async () => {
+    const name = $("#edit-name").value.trim();
+    const location = $("#edit-location").value.trim();
+    if (!name) { toast("Name can't be empty", "warn"); return; }
+    closeModal();
+    await patchDevice(d.id, { name, location }, "Device updated");
+  });
 }
 
 async function patchDevice(id, fields, msg) {

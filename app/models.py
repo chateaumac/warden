@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 class DeviceCreate(BaseModel):
     host: str = Field(min_length=1)
     name: str | None = None
+    location: str = ""
     port: int | None = Field(default=None, ge=1, le=65535)
     connector: Literal["adb", "ssh"] = "adb"
     profile_id: str | None = None
@@ -18,6 +19,7 @@ class DeviceCreate(BaseModel):
 
 class DeviceUpdate(BaseModel):
     name: str | None = None
+    location: str | None = None
     host: str | None = None
     port: int | None = Field(default=None, ge=1, le=65535)
     profile_id: str | None = None

@@ -13,6 +13,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS devices (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    location TEXT NOT NULL DEFAULT '',
     host TEXT NOT NULL,
     port INTEGER NOT NULL,
     connector TEXT NOT NULL DEFAULT 'adb',
@@ -59,6 +60,13 @@ class Database:
         with self._lock, self._conn:
             self._conn.execute("PRAGMA foreign_keys = ON")
             self._conn.executescript(SCHEMA)
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a DB was created — CREATE IF NOT EXISTS won't."""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(devices)")}
+        if "location" not in cols:
+            self._conn.execute("ALTER TABLE devices ADD COLUMN location TEXT NOT NULL DEFAULT ''")
 
     def close(self) -> None:
         with self._lock:

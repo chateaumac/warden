@@ -1,14 +1,24 @@
-# Chromecast with Google TV / Google TV Streamer / TVs running the Google TV launcher
+# Google TV devices — Chromecast with Google TV, Google TV Streamer, OEM sets
+#
+# Validated on: Chromecast with Google TV (sabrina, Android 14, 2025-10-01 patch)
+#
+# ADB persistence: Android 11+ Wireless Debugging uses TLS on a random port, and
+# `persist.adb.tcp.port` cannot be set from shell UID on Android 14. Classic TCP
+# ADB on port 5555 is active after `adb tcpip 5555` but resets on reboot. See
+# howto for the re-connect procedure. Warden will show the device disconnected
+# after a power cycle — no re-pairing needed (device remembers paired computers).
 id: google-tv
 name: Google TV / Chromecast
 connector: adb
 default_port: 5555
 description: >
-  Chromecast with Google TV and TVs running the Google TV launcher. Kills
-  sponsored launcher content and the recommendation tracking service, and can
-  force OS-level Private DNS (DoT) through your sinkhole.
+  Chromecast with Google TV and TVs running the Google TV launcher. Disables
+  Google's Privacy Sandbox ad stack (Ad Services, Federated Compute, On-Device
+  Personalization), viewing-behavior tracking, remote-control usage telemetry,
+  and feedback reporting. Optional actions disable ambient/dream modes that
+  surface promoted content and the Google Assistant integration.
 match:
-  keywords: ["chromecast", "google tv", "googletv", "sabrina"]
+  keywords: ["chromecast", "google tv", "googletv", "sabrina", "boreal", "kirkwood", "tangorpro"]
   mdns_types: ["_googlecast._tcp.local."]
 vars:
   - name: private_dns_host
@@ -18,59 +28,203 @@ vars:
       your AdGuard Home / Pi-hole DoT endpoint. Required by the Private DNS
       actions — leave empty to keep them skipped.
 howto: |
-  ## Enable ADB debugging (Google TV / Chromecast)
+  ## Enable ADB on Chromecast with Google TV / Google TV Streamer
+
+  ### One-time pairing (Wireless Debugging — Android 11+)
 
   1. On the device: **Settings → System → About**
-  2. Scroll to **Android TV OS build** and click it **7 times** — "You are now a developer!"
-  3. Back in **Settings → System → Developer options**
-  4. Enable **USB debugging**. If your device also shows a **Wireless debugging**
-     or **Network debugging** toggle, enable that too.
-  5. Make sure the device is reachable from Warden (same VLAN or routed, TCP 5555).
-  6. Add the device here and hit **Connect** — then look at the TV: accept the
-     *"Allow USB debugging?"* dialog and tick **Always allow from this computer**.
+  2. Tap **Android TV OS build** 7 times — "You are now a developer!"
+  3. Go to **Settings → System → Developer options** → enable **Wireless debugging**.
+  4. Tap **Pair device with pairing code** — note the IP:port and 6-digit code shown.
+  5. From your computer (or Warden host):
+     ```bash
+     adb pair <ip>:<pair-port> <6-digit-code>
+     adb connect <ip>:<debug-port>   # main Wireless Debugging port on same screen
+     adb tcpip 5555                  # switch to classic mode for this session
+     adb connect <ip>:5555
+     ```
+  6. Add the device in Warden at `<ip>:5555`.
 
-  > Some devices keep port 5555 closed after a reboot until ADB is poked awake.
-  > If Connect reports *unreachable* right after a reboot, toggle
-  > Developer options → USB debugging off and on once.
+  ### After a reboot
+
+  Classic TCP ADB (port 5555) does not persist across reboots on Android 14 —
+  `persist.adb.tcp.port` requires root to set. After a power cycle:
+
+  - On the device: **Developer options → Wireless debugging** — note the new IP:port.
+  - No re-pairing needed — the device remembers paired computers permanently.
+  - From Warden host: `adb connect <ip>:<new-debug-port> && adb tcpip 5555 && adb connect <ip>:5555`
+  - Reconnect in Warden (or wait — Warden auto-retries on the stored 5555 address).
+
+  > **Keep Wireless Debugging enabled** at all times in Developer options.
+  > Firewall TCP 5555 to your Warden LXC IP only — ADB is equivalent to root shell access.
+
+  ### Companion step: delete the advertising ID (do this once, by hand)
+
+  The "Disable Google Ad Services" action closes the new Privacy Sandbox
+  pipeline, but ad SDKs can fall back to the **legacy Android advertising ID
+  (GAID)** — a persistent cross-app identifier that is *more* invasive. The
+  GAID is stored inside Play Services and cannot be reset over ADB, so close
+  it manually:
+
+  **Settings → Privacy → Ads → Delete advertising ID** (and turn on
+  *Opt out of Ads Personalization*).
+
+  Doing both — disabling AdServices in Warden *and* deleting the GAID here —
+  closes both targeting pipelines. Disabling only one leaves the other open.
 actions:
-  - id: disable-launcher-ads
-    name: Disable launcher ads
+  # --- Google Privacy Sandbox / Ad Stack ---
+  - id: disable-adservices
+    name: Disable Google Ad Services (Privacy Sandbox)
     type: package_disable
-    package: com.google.android.tvlauncher.ads
+    package: com.google.android.adservices.api
     default: true
     description: >
-      Sponsored rows and banner ads served by the stock launcher. Safe to
-      disable; the launcher keeps working.
+      Google's Privacy Sandbox Ad Services API — delivers Topics API, FLEDGE,
+      and Attribution Reporting to apps on the device. Disabling stops all
+      on-device ad targeting and measurement. IMPORTANT companion step: also
+      delete the legacy advertising ID (Settings → Privacy → Ads → Delete
+      advertising ID) — otherwise ad SDKs fall back to the GAID, which is a
+      MORE invasive persistent cross-app identifier. The GAID lives inside Play
+      Services and cannot be reset over ADB, so this is a one-time manual step.
+      Small risk: a poorly-written app that hard-requires this API may crash on
+      launch — if a specific streaming app breaks, override this action to off
+      for that device.
+
+  - id: disable-adservices-ext
+    name: Disable Extended Ad Services
+    type: package_disable
+    package: com.google.android.ext.adservices.api
+    default: true
+    description: Extended / backwards-compatible Ad Services module.
+
+  - id: disable-federated-compute
+    name: Disable Federated Compute (on-device ML for ads)
+    type: package_disable
+    package: com.google.android.federatedcompute
+    default: true
+    description: >
+      Runs federated learning jobs in the background to improve ad targeting
+      models without uploading raw data. Disabling stops these background ML
+      training jobs entirely.
+
+  - id: disable-ondevice-personalization
+    name: Disable On-Device Personalization
+    type: package_disable
+    package: com.google.android.ondevicepersonalization.services
+    default: true
+    description: >
+      Builds a persistent personalization profile on the device — used by ad
+      networks to serve targeted ads based on local inference. Disabling
+      removes this profiling layer.
+
+  # --- Viewing tracking & recommendations ---
   - id: disable-tv-recommendations
-    name: Disable recommendations engine
+    name: Disable TV Recommendations engine
     type: package_disable
     package: com.google.android.tvrecommendations
     default: true
     description: >
-      Background service that tracks viewing to build "recommended for you"
-      rows — the tracking half of the launcher ad machine.
+      Background service that tracks viewing history to build recommendation
+      rows on the home screen and in search. Often pre-disabled on Android 14
+      Google TV — included to guarantee the state stays locked.
+
+  # --- Telemetry & remote logging ---
+  - id: disable-google-feedback
+    name: Disable Google Feedback / usage telemetry
+    type: package_disable
+    package: com.google.android.feedback
+    default: true
+    description: Collects crash reports and usage telemetry for Google's analytics pipeline.
+
+  - id: disable-tv-feedback-consent
+    name: Disable TV feedback consent UI
+    type: package_disable
+    package: com.android.tv.feedbackconsent
+    default: true
+    description: Companion consent UI for the Google TV feedback/telemetry system.
+
+  - id: disable-remote-logging
+    name: Disable remote-control usage logging
+    type: package_disable
+    package: com.google.android.tv.remotecontrol.logging
+    default: true
+    description: >
+      Logs every button press on the remote control and reports usage patterns
+      to Google. No functional impact from disabling.
+
+  # --- Optional: content-discovery surfaces (visible home-screen features) ---
+  - id: disable-tv-axel
+    name: Disable TV Axel (On Now panel)
+    type: package_disable
+    package: com.google.android.tv.axel
+    default: false
+    description: >
+      The "On Now" panel — an activity-aware home-screen row that surfaces live
+      content and recommendations backed by viewing history. NOTE: contrary to
+      some online guidance, this has nothing to do with the physical remote;
+      remote input is handled by com.google.android.tv.remote.service, which is
+      untouched. Disabling removes a visible home-screen row, so it is opt-in:
+      set true if you don't use the On Now panel and want the tracking off.
+
+  - id: disable-dreamx
+    name: Disable Google TV Dream ambient mode
+    type: package_disable
+    package: com.google.android.apps.tv.dreamx
+    default: false
+    description: >
+      Ambient screensaver that surfaces featured apps, movies, and promoted
+      content when the device is idle. Disabling replaces it with a blank screen.
+      Set true if you don't use the screensaver feature.
+
   - id: disable-backdrop
-    name: Disable ambient-mode promo content
+    name: Disable ambient backdrop screensaver
     type: package_disable
     package: com.google.android.backdrop
     default: false
     description: >
-      The ambient/screensaver backdrop service, which mixes promotional
-      imagery into the slideshow. Disable if you don't use ambient mode.
+      Backdrop ambient screensaver that shows curated art and Google Photos.
+      Mixes in some promoted content. Disabling removes the screensaver entirely.
+
+  # --- Optional: Privacy Sandbox runtime ---
+  - id: disable-sdk-sandbox
+    name: Disable SDK Runtime (Privacy Sandbox)
+    type: package_disable
+    package: com.google.android.sdksandbox
+    default: false
+    description: >
+      Isolated runtime for Privacy Sandbox SDKs — lets advertising SDKs run
+      in a sandboxed process. Apps generally fall back to legacy ad methods
+      rather than crashing when this is disabled.
+
+  # --- Optional: Google Assistant / Voice ---
+  - id: disable-katniss
+    name: Disable Google TV Assistant / voice search
+    type: package_disable
+    package: com.google.android.katniss
+    default: false
+    description: >
+      Powers the microphone button and Google Assistant integration on Google TV.
+      Disabling removes voice search and "Hey Google" support entirely.
+      Only set true if you never use voice control.
+
+  # --- Optional: storefronts ---
   - id: disable-play-games
     name: Disable Google Play Games
     type: package_disable
     package: com.google.android.play.games
     default: false
     description: Preinstalled and phones home. Disable unless you game on this device.
+
   - id: disable-google-tv-storefront
-    name: Disable Google TV storefront app
+    name: Disable Google TV storefront (Movies & TV)
     type: package_disable
     package: com.google.android.videos
     default: false
     description: >
-      The Google TV movies/shows storefront app. Only disable if you never
-      rent or buy through Google TV.
+      Google TV movie/show purchase and rental storefront. Only disable if you
+      never buy or rent through Google TV — removes the app tile entirely.
+
+  # --- Private DNS (DoT) ---
   - id: private-dns-mode
     name: Force Private DNS (DoT)
     type: setting
@@ -80,9 +234,9 @@ actions:
     default: false
     requires_vars: [private_dns_host]
     description: >
-      Forces every app on the device through your encrypted DNS sinkhole at
-      the OS level — defeats hardcoded plain-DNS evasion. Enable together with
-      the sinkhole hostname action below.
+      Forces every app on the device through your encrypted DNS sinkhole at the
+      OS level — defeats hardcoded plain-DNS evasion by any re-enabled package.
+
   - id: private-dns-host
     name: Private DNS sinkhole hostname
     type: setting
