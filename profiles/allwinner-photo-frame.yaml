@@ -1,0 +1,138 @@
+# Allwinner-based Android photo frames (ALONG, Frameo-compatible, similar OEMs)
+#
+# These devices (Allwinner sun8i SoC, Android 6.0.1, brand "ALONG" or similar)
+# ship several known-bad system packages that cannot be removed without flashing
+# a clean ROM. pm disable-user --user 0 requires system UID on Android 6, so
+# this profile uses pm hide (works from shell UID) + am force-stop instead.
+# Hidden packages disappear from pm list packages and cannot be started by the
+# OS or other apps until explicitly unhidden.
+#
+# Reference incidents:
+#   - ADUPS FOTA backdoor (2016, Kryptowire/FCC/DHS): covert SMS/contact/IMEI
+#     exfiltration + silent app install via RECOVERY permission
+#   - FBI IC3 advisory 2026: residential proxy enrollment via IoT frames
+#
+# After a firmware update, unhidden packages may reappear — Warden re-hides
+# them on the next enforce cycle.
+id: allwinner-photo-frame
+name: Allwinner Photo Frame (ALONG / Frameo)
+connector: adb
+default_port: 5555
+description: >
+  Allwinner sun8i-based Android photo frames (brands: ALONG, others) running
+  Android 6.0.1. These ship with ADUPS FOTA (a documented data-exfiltration
+  backdoor) and several factory-test apps with dangerous system permissions
+  (MASTER_CLEAR, CONTROL_VPN, INSTALL_PACKAGES, RECORD_AUDIO). Warden hides
+  them using pm hide, which is persistent across reboots and survives without
+  root access.
+match:
+  keywords: ["along", "allwinner", "photo frame", "digital photo frame", "frameo", "astar", "102k"]
+howto: |
+  ## Enable ADB debugging (Allwinner / ALONG photo frame)
+
+  These frames do not expose a standard developer options menu. TCP ADB
+  requires a one-time USB bootstrap — after that, Warden manages it over
+  the network.
+
+  ### One-time USB setup
+
+  1. Connect the frame to your computer via USB data cable.
+  2. On the frame: go to **Settings → About** and tap **Build number** 7 times.
+  3. Return to Settings and open **Developer options**.
+  4. Enable **USB debugging** and tap **OK** on the authorization dialog.
+  5. From your computer:
+     ```bash
+     adb devices          # confirm the frame shows as "device"
+     adb tcpip 5555       # activate TCP/IP mode
+     adb connect <ip>:5555
+     ```
+  6. Set the persistent property so TCP ADB survives reboots:
+     ```bash
+     adb shell setprop persist.adb.tcp.port 5555
+     ```
+  7. Disconnect USB. The frame is now accessible at port 5555 indefinitely.
+
+  > **ADB on this device is equivalent to remote shell access.** Restrict
+  > port 5555 at the firewall to your Warden management host only.
+actions:
+  - id: hide-adups-fota
+    name: Hide ADUPS FOTA (known backdoor)
+    type: shell
+    check_cmd: "pm list packages | grep -c com.adups.fota"
+    expect: "0"
+    enforce_cmd: "pm hide com.adups.fota && am force-stop com.adups.fota"
+    default: true
+    description: >
+      ADUPS FOTA v5.28 — documented data-exfiltration backdoor (Kryptowire,
+      2016). Covertly collects IMEI, contacts, SMS and uploads to servers in
+      China. Has INTERNET + RECOVERY + REBOOT + WRITE_SECURE_SETTINGS
+      permissions and starts on every boot. pm hide removes it from the
+      package index and prevents any process from binding to its services.
+  - id: hide-along-factorytest
+    name: Hide ALONG factory test app
+    type: shell
+    check_cmd: "pm list packages | grep -c com.along.factorytest"
+    expect: "0"
+    enforce_cmd: "pm hide com.along.factorytest && am force-stop com.along.factorytest"
+    default: true
+    description: >
+      Factory burn-in app that should have been stripped before shipping.
+      Holds MASTER_CLEAR, CONTROL_VPN, MANAGE_PROFILE_AND_DEVICE_OWNERS,
+      RECORD_AUDIO, CAMERA, ACCESS_FINE_LOCATION — all SYSTEM_FIXED and
+      granted by default. CONTROL_VPN alone is enough to MITM all traffic.
+  - id: hide-along-table
+    name: Hide ALONG test app (com.along.table)
+    type: shell
+    check_cmd: "pm list packages | grep -c com.along.table"
+    expect: "0"
+    enforce_cmd: "pm hide com.along.table && am force-stop com.along.table"
+    default: true
+    description: Secondary ALONG OEM test application with system-level privileges.
+  - id: hide-dragonfire
+    name: Hide Softwinner DragonFire diagnostic
+    type: shell
+    check_cmd: "pm list packages | grep -c com.softwinner.dragonfire"
+    expect: "0"
+    enforce_cmd: "pm hide com.softwinner.dragonfire && am force-stop com.softwinner.dragonfire"
+    default: true
+    description: >
+      Allwinner factory diagnostic with INSTALL_PACKAGES, DELETE_PACKAGES,
+      GRANT_RUNTIME_PERMISSIONS, and REVOKE_RUNTIME_PERMISSIONS — can
+      silently install any APK and self-grant any permission.
+  - id: hide-dragonaging
+    name: Hide Softwinner DragonAging burn-in tool
+    type: shell
+    check_cmd: "pm list packages | grep -c com.softwinner.dragonaging"
+    expect: "0"
+    enforce_cmd: "pm hide com.softwinner.dragonaging && am force-stop com.softwinner.dragonaging"
+    default: true
+    description: Allwinner hardware aging/burn-in test tool, no place on a production device.
+  - id: hide-dragonphone
+    name: Hide Softwinner DragonPhone diagnostic
+    type: shell
+    check_cmd: "pm list packages | grep -c com.softwinner.dragonphone"
+    expect: "0"
+    enforce_cmd: "pm hide com.softwinner.dragonphone && am force-stop com.softwinner.dragonphone"
+    default: true
+    description: Allwinner phone/dialer diagnostic app with system privileges.
+  - id: private-dns-mode
+    name: Force Private DNS (DoT)
+    type: setting
+    namespace: global
+    key: private_dns_mode
+    value: hostname
+    default: false
+    requires_vars: [private_dns_host]
+    description: >
+      Forces all DNS through your encrypted sinkhole, blocking even hardcoded
+      DNS lookups by any re-enabled malware. Especially effective here given
+      the known-bad packages on this device class.
+  - id: private-dns-host
+    name: Private DNS sinkhole hostname
+    type: setting
+    namespace: global
+    key: private_dns_specifier
+    value: "{var:private_dns_host}"
+    default: false
+    requires_vars: [private_dns_host]
+    description: DoT sinkhole hostname, e.g. your NextDNS or AdGuard Home endpoint.

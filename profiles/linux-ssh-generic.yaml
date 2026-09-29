@@ -1,0 +1,38 @@
+# Skeleton profile demonstrating the SSH connector. Copy into the container's
+# /data/profiles directory, change the id, and add your own shell actions —
+# Warden loads custom profiles from there at startup (they override built-ins
+# with the same id).
+id: linux-ssh-generic
+name: Generic Linux (SSH)
+connector: ssh
+default_port: 22
+description: >
+  Skeleton for SSH-managed devices (rooted webOS TVs, Linux SBCs, anything
+  with a shell). SSH devices use generic shell actions: a check command whose
+  output is matched, and an enforce command run on drift.
+match:
+  keywords: []
+howto: |
+  ## Connect over SSH
+
+  SSH devices authenticate with credentials stored in the device's connector
+  config (the **Connector config (JSON)** field when adding manually):
+
+      {"username": "root", "password": "secret"}
+
+  or with a key file mounted into the container:
+
+      {"username": "root", "key_path": "/data/ssh/id_ed25519"}
+
+  Warden trusts the host key on first connect (trust-on-first-use).
+actions:
+  - id: example-mask-telemetry
+    name: Example — keep a telemetry service masked
+    type: shell
+    check_cmd: "systemctl is-enabled some-telemetry.service 2>&1 || true"
+    expect: "masked"
+    enforce_cmd: "systemctl mask --now some-telemetry.service"
+    default: false
+    description: >
+      Template action: the check command's output must contain the 'expect'
+      string, otherwise the enforce command runs. Replace with your own.
