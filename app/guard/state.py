@@ -27,6 +27,7 @@ class GuardState:
     last_matched_rule: str = ""
     last_violation_detail: str = ""
     consecutive_errors: int = 0
+    auth_pending: bool = False  # TV is showing (or last showed) the ADB approval dialog
     snooze_until_ts: float = 0.0
     status_detail: str = ""
 

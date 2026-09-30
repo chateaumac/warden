@@ -88,3 +88,9 @@ def test_pattern_tester(client):
     data = res.json()
     assert data["matched"] is True
     assert data["matched_text"] == "Fox News"
+
+
+def test_index_is_never_served_stale(client):
+    res = client.get("/")
+    assert res.status_code == 200
+    assert res.headers["cache-control"] == "no-cache"

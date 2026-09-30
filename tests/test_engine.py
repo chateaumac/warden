@@ -191,3 +191,29 @@ def test_allowed_channel_is_monitored(run_poll):
 def test_poll_reads_only_media_session(run_poll):
     conn, _, _ = run_poll([real_dump("The Herd With Colin Cowherd, FS1, null")])
     assert conn.commands == ["dumpsys media_session"]
+
+
+def test_pending_approval_holds_one_connection_instead_of_reprompting(monkeypatch, clock):
+    """Each unauthorized connect pops another dialog on the TV, so after the first one
+    the guard waits on a single long-lived connection."""
+    from app.connectors.base import Unauthorized
+
+    timeouts = []
+
+    class PromptingConnector(FakeConnector):
+        def connect(self, auth_timeout_s=None):
+            timeouts.append(auth_timeout_s)
+            if len(timeouts) < 3:
+                raise Unauthorized("waiting for Allow USB debugging")
+            return {}
+
+    conn = PromptingConnector([real_dump("The Herd With Colin Cowherd, FS1, null")])
+    monkeypatch.setattr(engine_mod, "make_connector", lambda device, settings: conn)
+    guard = GuardEngine(db=FakeDb([FOX_RULE]), settings=None)
+    state = GuardState(device_id=DEVICE["id"])
+    for _ in range(3):
+        guard._poll_step(DEVICE, {"cooldown_s": 15.0}, state)
+
+    assert timeouts == [3.0, engine_mod.AUTH_PROMPT_WAIT_S, engine_mod.AUTH_PROMPT_WAIT_S]
+    assert state.auth_pending is False
+    assert state.state == DeviceState.MONITORING

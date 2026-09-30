@@ -20,6 +20,11 @@ TUNE_VERIFY_TIMEOUT_S = 12.0
 TUNE_REJECT_S = 4.0
 TUNE_VERIFY_STEP_S = 1.0
 
+# Every unauthorized ADB connection makes the TV show another "Allow USB debugging?"
+# dialog, and they stack. Once a TV is known to be waiting for approval, hold a single
+# connection open this long instead of reconnecting (and re-prompting) on every poll.
+AUTH_PROMPT_WAIT_S = 300.0
+
 
 class GuardEngine:
     def __init__(self, db, settings, notifier=None, ha_client=None):
@@ -151,8 +156,9 @@ class GuardEngine:
         state.last_poll_ts = now
 
         try:
-            conn.connect(auth_timeout_s=3.0)
+            conn.connect(auth_timeout_s=AUTH_PROMPT_WAIT_S if state.auth_pending else 3.0)
             state.consecutive_errors = 0
+            state.auth_pending = False
 
             rules = [r for r in self.list_rules() if r.enabled]
             target_pkgs = self._target_packages(rules)
@@ -185,7 +191,9 @@ class GuardEngine:
             state.status_detail = f"Device unreachable ({exc.__class__.__name__})"
         except Unauthorized:
             state.state = DeviceState.OFFLINE
-            state.status_detail = "Unauthorized (ADB key prompt pending)"
+            state.auth_pending = True
+            state.status_detail = ("Waiting for approval on the TV: accept 'Allow USB debugging?' "
+                                   "with 'Always allow' (press Home if the dialog is hidden)")
         except Exception as exc:
             state.consecutive_errors += 1
             state.status_detail = f"Poll error: {exc}"

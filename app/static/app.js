@@ -333,6 +333,7 @@ function renderDevice(main, dev) {
         <button class="btn ${dev.mode === 'enforce' ? 'primary' : 'secondary'}" onclick="toggleDeviceMode(${dev.id})">
           Mode: ${esc(dev.mode.toUpperCase())}
         </button>
+        <button class="btn secondary" onclick="openEditDeviceModal(${dev.id})">✎ Edit</button>
         <button class="btn secondary" onclick="triggerAudit(${dev.id})">⚡ Audit Now</button>
         <button class="btn danger" onclick="deleteDeviceConfirm(${dev.id})">Delete</button>
       </div>
@@ -751,6 +752,59 @@ async function triggerAudit(devId) {
   }
 }
 
+function openEditDeviceModal(devId) {
+  const d = deviceById(devId);
+  if (!d) return;
+  const profiles = state.profiles.map((p) =>
+    `<option value="${p.id}" ${p.id === d.profile_id ? "selected" : ""}>${esc(p.name)} (${esc(p.connector)})</option>`).join("");
+  openModal(`
+    <h3>Edit Device</h3>
+    <form onsubmit="handleEditDevice(event, ${d.id})">
+      <label class="label">Device Name</label>
+      <input class="input block" name="name" value="${esc(d.name)}" required>
+      <label class="label" style="margin-top:10px;">Host IP</label>
+      <input class="input block" name="host" value="${esc(d.host)}" required>
+      <label class="label" style="margin-top:10px;">Port</label>
+      <input class="input block" name="port" type="number" min="1" max="65535" value="${d.port}" required>
+      <label class="label" style="margin-top:10px;">Profile</label>
+      <select class="input block" name="profile_id">
+        <option value="">-- No profile --</option>
+        ${profiles}
+      </select>
+      <div class="hint">Changing the profile clears the previous audit results.</div>
+      <label class="label" style="margin-top:10px;">Location</label>
+      <input class="input block" name="location" value="${esc(d.location || "")}">
+      <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:8px;">
+        <button type="button" class="btn secondary" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  `);
+}
+
+async function handleEditDevice(e, devId) {
+  e.preventDefault();
+  const f = e.target;
+  try {
+    await api(`/api/devices/${devId}`, {
+      method: "PATCH",
+      body: {
+        name: f.name.value.trim(),
+        host: f.host.value.trim(),
+        port: Number(f.port.value),
+        profile_id: f.profile_id.value || null,
+        location: f.location.value.trim(),
+      },
+    });
+    closeModal();
+    toast("Device updated");
+    await refresh();
+    renderMain();
+  } catch (err) {
+    toast("Failed: " + err.message, "down");
+  }
+}
+
 async function deleteDeviceConfirm(devId) {
   if (!confirm("Are you sure you want to delete this device from Warden?")) return;
   try {
@@ -821,38 +875,44 @@ function renderAdd(main) {
 
 async function startDiscovery() {
   try {
-    const res = await api("/api/discovery/scan", { method: "POST", body: { mdns: true, duration_s: 4 } });
-    pollDiscovery(res.scan_id);
+    await api("/api/discovery/scan", { method: "POST", body: { mdns: true, duration_s: 4 } });
+    pollDiscovery();
   } catch (e) {
     $("#discovery-results").innerHTML = `<div class="hint">Discovery error: ${esc(e.message)}</div>`;
   }
 }
 
-async function pollDiscovery(scanId) {
+async function pollDiscovery() {
   try {
-    const res = await api(`/api/discovery/scan/${scanId}`);
+    const res = await api("/api/discovery");
     const results = res.results || [];
+    state.discovered = results;
     const div = $("#discovery-results");
     if (!div) return;
     if (!results.length) {
-      div.innerHTML = `<div class="hint">${res.active ? "Scanning..." : "No new devices discovered."}</div>`;
-      if (res.active) setTimeout(() => pollDiscovery(scanId), 1500);
+      div.innerHTML = `<div class="hint">${res.scanning ? "Scanning..." : "No new devices discovered."}</div>`;
+      if (res.scanning) setTimeout(pollDiscovery, 1500);
       return;
     }
-    div.innerHTML = results.map(r => `
+    div.innerHTML = results.map((r, i) => `
       <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border);">
         <div>
-          <b>${esc(r.name || r.host)}</b> &middot; <code>${esc(r.host)}:${r.port}</code>
-          <div class="hint">${esc(r.suggested_profile_id || "Generic")} &middot; via ${esc(r.source)}</div>
+          <b>${esc(r.name || r.host)}</b> &middot; <code>${esc(r.host)}:${r.adb_port}</code>
+          <div class="hint">${esc(r.suggested_profile || "Generic")} &middot; via ${r.mdns_types.length ? "mDNS" : "subnet scan"}${r.port_open ? "" : " &middot; ADB port closed"}</div>
         </div>
-        <button class="btn primary sm" onclick="addDiscoveredDevice('${esc(r.host)}', ${r.port}, '${esc(r.name)}', '${esc(r.suggested_profile_id || '')}')">＋ Add</button>
+        ${r.already_added
+          ? `<span class="hint">Already added</span>`
+          : `<button class="btn primary sm" onclick="addDiscoveredDevice(${i})">＋ Add</button>`}
       </div>
     `).join("");
-    if (res.active) setTimeout(() => pollDiscovery(scanId), 1500);
+    if (res.scanning) setTimeout(pollDiscovery, 1500);
   } catch {}
 }
 
-async function addDiscoveredDevice(host, port, name, profileId) {
+async function addDiscoveredDevice(index) {
+  const r = (state.discovered || [])[index];
+  if (!r) return;
+  const { host, adb_port: port, name, suggested_profile: profileId } = r;
   try {
     const dev = await api("/api/devices", {
       method: "POST",

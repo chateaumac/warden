@@ -102,7 +102,9 @@ def create_app() -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
-        return FileResponse(str(STATIC_DIR / "index.html"))
+        # Always revalidate: the page carries the ?v= cache-busters for app.js/style.css,
+        # so a heuristically cached copy would keep serving the previous release's UI.
+        return FileResponse(str(STATIC_DIR / "index.html"), headers={"Cache-Control": "no-cache"})
 
     auth.install(app, auth_settings)
     return app

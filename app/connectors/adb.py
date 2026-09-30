@@ -102,11 +102,12 @@ class AdbConnector(BaseConnector):
                               auth_timeout_s=timeout)
         except adb_exc.DeviceAuthError as exc:
             raise Unauthorized(AUTH_HINT) from exc
-        except adb_exc.AdbTimeoutError as exc:
-            # TCP connected but the ADB handshake never finished — almost always
-            # an authorization dialog waiting on screen
+        except (adb_exc.AdbTimeoutError, adb_exc.TcpTimeoutException) as exc:
+            # TCP connected (a failed connect raises a plain socket error below) but the
+            # ADB handshake never finished — almost always the authorization dialog
+            # waiting on the TV screen. adb-shell reports that as a TCP read timeout.
             raise Unauthorized(f"timed out waiting for authorization — {AUTH_HINT}") from exc
-        except (TimeoutError, adb_exc.TcpTimeoutException, ConnectionRefusedError, OSError) as exc:
+        except (TimeoutError, ConnectionRefusedError, OSError) as exc:
             raise Unreachable(
                 f"cannot reach {self.host}:{self.port} ({exc or exc.__class__.__name__})"
             ) from exc

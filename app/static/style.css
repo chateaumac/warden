@@ -177,7 +177,9 @@ html, body {
 label.fld { display: block; margin-bottom: 10px; font-size: 12.5px; color: var(--muted); }
 label.fld b { color: var(--text); font-weight: 600; display: block; margin-bottom: 4px; }
 
-input[type=text], input[type=number], select, textarea {
+.label { display: block; margin-bottom: 4px; font-size: 12.5px; font-weight: 600; color: var(--text); }
+
+input[type=text], input[type=number], input:not([type]), select, textarea {
   width: 100%;
   background: var(--bg);
   border: 1px solid var(--border);

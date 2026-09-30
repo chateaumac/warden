@@ -8,7 +8,7 @@ APP_DIR = Path(__file__).resolve().parent
 SERVICE_DIR = APP_DIR.parent
 STATIC_DIR = APP_DIR / "static"
 
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 
 
 @dataclass(frozen=True)
