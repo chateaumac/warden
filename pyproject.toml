@@ -1,6 +1,6 @@
 [project]
 name = "warden"
-version = "0.3.0"
+version = "0.3.1"
 license = { text = "GPL-3.0-only" }
 description = "Intelligent governance, privacy sanitization, and channel guard for smart TVs"
 readme = "README.md"

@@ -126,6 +126,8 @@ function mdLite(text) {
 
 async function init() {
   $("#btn-add").addEventListener("click", () => showAdd());
+  // Marks edited fields for isEditingMain(); a re-render replaces them, clearing the mark
+  $("#main").addEventListener("input", (e) => { e.target.dataset.dirty = "1"; });
   await loadSession();
   await loadProfiles();
   await loadChannelRules();
@@ -190,7 +192,19 @@ async function refresh() {
   }
   renderSummary();
   renderSidebar();
-  renderMain();
+  if (!isEditingMain()) renderMain();
+}
+
+// The 5s refresh rebuilds #main from scratch, which wiped anything typed into a form there
+// (e.g. Add device). Skip it while a field in #main has focus or has been edited; renders
+// the user triggers (save, cancel, navigation) call renderMain() directly and still happen.
+function isEditingMain() {
+  const main = $("#main");
+  const active = document.activeElement;
+  return Boolean(main) && (
+    main.querySelector("[data-dirty]") !== null ||
+    (main.contains(active) && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName))
+  );
 }
 
 const deviceById = (id) => state.devices.find((d) => d.id === id);
