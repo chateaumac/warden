@@ -12,6 +12,9 @@ jobs:
     # toolcache, so the toolchain runs in a container as the runner user (no
     # root-owned files left in the workspace).
     runs-on: [self-hosted, build-runner, docker-build]
+    # warden is public: never run code from a fork's pull request on the LAN
+    # build runner. Pushes and PRs from branches in this repo still run.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
