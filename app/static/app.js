@@ -20,6 +20,8 @@ const ACTION_STATE = {
   compliant:   "✓ compliant",
   fixed:       "⟳ fixed",
   drifted:     "✗ drifted",
+  blocked:     "⛔ refused (unsafe)",
+  reverted:    "↺ reverted",
   error:       "! error",
   na:          "not installed",
   skipped:     "skipped",
@@ -362,7 +364,10 @@ function renderDevice(main, dev) {
 
     <!-- Sanitization / Profile Card -->
     <div class="card">
-      <h3>Sanitization &amp; Tracker Policy (${esc(profile ? profile.name : "No Profile")})</h3>
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h3>Sanitization &amp; Tracker Policy (${esc(profile ? profile.name : "No Profile")})</h3>
+        ${profile ? `<button class="btn secondary sm" onclick="revertAllConfirm(${dev.id})">↺ Revert all</button>` : ""}
+      </div>
       <p class="hint">${esc(profile ? profile.description : "Assign a profile to enforce anti-tracking & ad blocking")}</p>
       
       <div style="margin-top:14px;">
@@ -371,6 +376,7 @@ function renderDevice(main, dev) {
             <tr style="text-align:left; border-bottom:1px solid var(--border); color:var(--muted);">
               <th style="padding:6px 0;">Action / Tracker</th>
               <th style="padding:6px 0;">Status</th>
+              <th style="padding:6px 0;"></th>
             </tr>
           </thead>
           <tbody>
@@ -378,6 +384,7 @@ function renderDevice(main, dev) {
               <tr style="border-bottom:1px solid var(--border);">
                 <td style="padding:8px 0;"><b>${esc(r.name)}</b><br><span class="hint">${esc(r.detail || r.observed || "")}</span></td>
                 <td style="padding:8px 0;"><span class="chip">${esc(ACTION_STATE[r.status] || r.status)}</span></td>
+                <td style="padding:8px 0; text-align:right;">${actionButton(dev.id, r)}</td>
               </tr>
             `).join("")}
           </tbody>
@@ -735,6 +742,53 @@ async function toggleDeviceMode(devId) {
   try {
     await api(`/api/devices/${devId}`, { method: "PATCH", body: { mode: newMode } });
     toast(`Mode set to ${newMode}`);
+    await refresh();
+  } catch (e) {
+    toast(e.message, "down");
+  }
+}
+
+function actionButton(devId, r) {
+  const id = esc(JSON.stringify(r.action_id));
+  if (["compliant", "fixed", "blocked"].includes(r.status)) {
+    return `<button class="btn secondary sm" onclick="revertAction(${devId}, ${id})">Revert</button>`;
+  }
+  if (["disabled", "reverted"].includes(r.status)) {
+    return `<button class="btn secondary sm" onclick="setActionEnabled(${devId}, ${id}, true)">Turn on</button>`;
+  }
+  return "";
+}
+
+async function revertAction(devId, actionId) {
+  try {
+    const res = await api(`/api/devices/${devId}/actions/${encodeURIComponent(actionId)}/revert`, { method: "POST" });
+    toast(res.ok ? "Reverted" : `Revert failed: ${res.error || res.results.map(r => r.detail).join("; ")}`, res.ok ? "ok" : "down");
+    await refresh();
+  } catch (e) {
+    toast("Revert failed: " + e.message, "down");
+  }
+}
+
+async function revertAllConfirm(devId) {
+  if (!confirm("Re-enable every package and restore every setting Warden manages on this device, and stop managing them?")) return;
+  try {
+    const res = await api(`/api/devices/${devId}/revert`, { method: "POST" });
+    toast(res.ok ? "All actions reverted" : `Some actions could not be reverted${res.error ? ": " + res.error : ""}`, res.ok ? "ok" : "down");
+    await refresh();
+  } catch (e) {
+    toast("Revert failed: " + e.message, "down");
+  }
+}
+
+async function setActionEnabled(devId, actionId, enabled) {
+  const dev = deviceById(devId);
+  if (!dev) return;
+  try {
+    await api(`/api/devices/${devId}`, {
+      method: "PATCH",
+      body: { action_overrides: { ...(dev.action_overrides || {}), [actionId]: enabled } },
+    });
+    toast(enabled ? "Turned on; applies on the next enforce" : "Turned off");
     await refresh();
   } catch (e) {
     toast(e.message, "down");

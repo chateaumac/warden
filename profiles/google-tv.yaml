@@ -152,6 +152,16 @@ actions:
       Logs every button press on the remote control and reports usage patterns
       to Google. No functional impact from disabling.
 
+  - id: disable-partner-autoinstall
+    name: Disable partner app auto-installer
+    type: package_disable
+    package: android.autoinstalls.config.google.gtvpai
+    default: true
+    description: >
+      Silently installs the device maker's partner apps after setup and after
+      firmware updates (OEM Google TV sets). Apps already installed stay;
+      nothing new is pushed. Not present on Google's own Chromecast.
+
   # --- Optional: content-discovery surfaces (visible home-screen features) ---
   - id: disable-tv-axel
     name: Disable TV Axel (On Now panel)

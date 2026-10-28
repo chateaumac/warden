@@ -31,7 +31,8 @@ AUTH_HINT = (
 IDENT_CMD = (
     "getprop ro.product.manufacturer; "
     "getprop ro.product.model; "
-    "getprop ro.build.version.release"
+    "getprop ro.build.version.release; "
+    "getprop ro.build.fingerprint"
 )
 
 _signer: PythonRSASigner | None = None
@@ -116,11 +117,12 @@ class AdbConnector(BaseConnector):
             out = self.shell(IDENT_CMD)
         except ConnectorError:
             return {}
-        manufacturer, model, os_version = (out.splitlines() + ["", "", ""])[:3]
+        manufacturer, model, os_version, fingerprint = (out.splitlines() + [""] * 4)[:4]
         return {
             "manufacturer": manufacturer.strip(),
             "model": model.strip(),
             "os": f"Android {os_version.strip()}".strip(),
+            "fingerprint": fingerprint.strip(),
         }
 
     def shell(self, cmd: str) -> str:

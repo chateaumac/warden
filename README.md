@@ -13,6 +13,10 @@ Warden is a unified, low-overhead device governance service for Android TV and G
 - **Blocks Launcher Ads**: Neutralizes sponsored rows and promotional banners (`com.google.android.tvlauncher.ads`).
 - **Forces OS-Level Private DNS (DoT)**: Enforces encrypted DNS sinkholes (AdGuard Home, NextDNS, Pi-hole DoT) at the Android OS resolver level, defeating app-level DNS bypass.
 - **Scheduled Drift Enforcement**: Automatically re-applies debloat settings when TV firmware updates silently re-enable them.
+- **Safety Guards**: Refuses to disable core Android packages, anything that runs the HDMI/AV inputs (`TV_INPUT_HARDWARE`), the apps the TV opens Settings and its inputs with, and the setup wizard while it owns the saved Wi-Fi network. A refused action shows as *refused (unsafe)* with the reason; `force: true` on the action overrides it.
+- **Revert**: Undo one action or all of them from the dashboard. Packages are re-enabled and settings restored to their value from before Warden first changed them, and the actions are turned off for that device.
+- **Firmware & Preload Watch**: Records the build fingerprint and the installed packages on every audit; a firmware update or newly installed packages raise an event and an ntfy alert listing what appeared, so new vendor bloat gets noticed.
+- **Multi-user aware**: Package state is read for user 0 only. Android 14 merges every user's answer otherwise, and the Chromecast's dormant second user made disabled-for-them packages look compliant.
 
 ### 2. 🚫 Real-Time Channel Guard (Content Moderation)
 - **Zero Flash Wear**: Completely eliminates disk-writing UI dumps (`/sdcard/ui.xml`), preserving TV flash memory and eliminating playback stutter on low-power devices (Chromecast / TCL).
@@ -104,12 +108,15 @@ Warden holds an ADB key that can run shell commands on every TV that authorized 
 
 ## 📦 Bundled Profiles
 
-- `google-tv.yaml` (Chromecast with Google TV, Google TV Streamer, TCL Google TVs)
+- `google-tv.yaml` (Chromecast with Google TV, Google TV Streamer, other OEM Google TVs)
+- `tcl-google-tv.yaml` (TCL Google TVs: Samba TV ACR / TCL analytics, content pushes, silent installers, plus everything in `google-tv.yaml`)
 - `sony-bravia.yaml` (Sony Bravia Android TVs with Samba ACR removal)
 - `nvidia-shield.yaml` (NVIDIA SHIELD TV debloat & launcher cleanup)
 - `allwinner-photo-frame.yaml` (Frameo digital frames privacy hardening)
 - `generic-android-tv.yaml` (Stock Android TV)
 - `linux-ssh-generic.yaml` (Linux devices via SSH)
+
+TCL package knowledge and the safety guards are adapted from [cleanyourtv](https://github.com/Gathin23/cleanyourtv)'s community-verified device lists.
 
 ---
 

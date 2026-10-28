@@ -94,6 +94,24 @@ def enforce_device(device_id: int, request: Request) -> dict:
     return state.engine.run(device_id, force_enforce=True)
 
 
+@router.post("/{device_id}/revert")
+def revert_device(device_id: int, request: Request) -> dict:
+    """Undo every action this device has turned on, and turn them off."""
+    state = request.app.state
+    _get_or_404(state, device_id)
+    return state.engine.revert(device_id)
+
+
+@router.post("/{device_id}/actions/{action_id}/revert")
+def revert_device_action(device_id: int, action_id: str, request: Request) -> dict:
+    state = request.app.state
+    device = _get_or_404(state, device_id)
+    profile = state.profiles.get(device["profile_id"] or "")
+    if profile is None or profile.action(action_id) is None:
+        raise HTTPException(status_code=404, detail=f"action {action_id!r} not in this device's profile")
+    return state.engine.revert(device_id, [action_id])
+
+
 @router.get("/{device_id}/events")
 def device_events(device_id: int, request: Request, limit: int = 100) -> list[dict]:
     state = request.app.state

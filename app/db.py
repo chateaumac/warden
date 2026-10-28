@@ -6,7 +6,9 @@ import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
-JSON_FIELDS = ("vars", "config", "identity", "action_overrides", "last_result")
+JSON_FIELDS = ("vars", "config", "identity", "action_overrides", "last_result", "originals",
+               "packages")
+LIST_FIELDS = ("last_result", "packages")
 RULE_JSON_FIELDS = ("target_packages", "channels", "patterns", "key_sequence", "tune_urls")
 DEFAULT_POLL_INTERVAL_S = 30.0
 EVENTS_KEPT_PER_DEVICE = 400
@@ -29,6 +31,8 @@ CREATE TABLE IF NOT EXISTS devices (
     status TEXT NOT NULL DEFAULT 'unknown',
     status_detail TEXT NOT NULL DEFAULT '',
     last_result TEXT NOT NULL DEFAULT '[]',
+    originals TEXT NOT NULL DEFAULT '{}',
+    packages TEXT NOT NULL DEFAULT '[]',
     last_seen TEXT,
     last_audit TEXT,
     created_at TEXT NOT NULL,
@@ -95,6 +99,12 @@ class Database:
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(devices)")}
         if "location" not in cols:
             self._conn.execute("ALTER TABLE devices ADD COLUMN location TEXT NOT NULL DEFAULT ''")
+        # Setting values from before Warden first changed them, so Revert can put them back
+        if "originals" not in cols:
+            self._conn.execute("ALTER TABLE devices ADD COLUMN originals TEXT NOT NULL DEFAULT '{}'")
+        # User 0's installed packages at the last audit, to spot firmware-pushed preloads
+        if "packages" not in cols:
+            self._conn.execute("ALTER TABLE devices ADD COLUMN packages TEXT NOT NULL DEFAULT '[]'")
         rule_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(channel_rules)")}
         if "channels" not in rule_cols:
             self._conn.execute("ALTER TABLE channel_rules ADD COLUMN channels TEXT NOT NULL DEFAULT '[]'")
@@ -143,7 +153,7 @@ class Database:
         device = dict(row)
         for field in JSON_FIELDS:
             if field in device:
-                device[field] = json.loads(device[field] or "null") or ([] if field == "last_result" else {})
+                device[field] = json.loads(device[field] or "null") or ([] if field in LIST_FIELDS else {})
         device["enabled"] = bool(device["enabled"])
         return device
 
