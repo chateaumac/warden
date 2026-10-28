@@ -121,6 +121,14 @@ actions:
     package: com.sonypicturescore
     default: false
     description: Sony's preinstalled movie storefront / streaming app.
+  - id: disable-partner-autoinstall
+    name: Disable partner app auto-installer
+    type: package_disable
+    package: android.autoinstalls.config.sony.bravia
+    default: true
+    description: >
+      Silently installs Sony's partner apps after setup and after firmware
+      updates. Apps already installed stay; nothing new is pushed.
   - id: private-dns-mode
     name: Force Private DNS (DoT)
     type: setting

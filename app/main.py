@@ -52,7 +52,7 @@ def create_app() -> FastAPI:
     guard_engine = GuardEngine(db=db, settings=settings, notifier=notifier, ha_client=ha_client)
     ha_client.guard_engine = guard_engine
 
-    engine = Engine(db, profiles, settings)
+    engine = Engine(db, profiles, settings, notifier=notifier)
     discovery = DiscoveryService(
         profiles_getter=lambda: profiles,
         known_hosts_getter=lambda: {d["host"] for d in db.list_devices()},
