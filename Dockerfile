@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -12,13 +12,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt requirements-dev.txt pyproject.toml README.md ./
-RUN pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt
+COPY requirements.txt pyproject.toml README.md ./
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ app/
 COPY profiles/ profiles/
 COPY scripts/ scripts/
-COPY tests/ tests/
 
 # Run unprivileged; /data (DB + ADB key) must be owned by this UID. When upgrading a
 # volume created by an older root-run image:  chown -R 10001:10001 <volume path>
